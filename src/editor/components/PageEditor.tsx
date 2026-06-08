@@ -246,7 +246,27 @@ export function PageEditor({ pageId }: PageEditorProps) {
         </div>
       </header>
 
-      <div className="page-editor__content flex flex-col min-w-0">
+      <div
+        className="page-editor__content flex flex-col min-w-0"
+        onClick={(e) => {
+          if (e.target === e.currentTarget || (e.target as HTMLElement).classList.contains('empty-state-placeholder')) {
+            if (sortedBlocks.length === 0) {
+              const newBlockId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2, 15)
+              draftStore.stage(pageId, newBlockId, {
+                type: 'paragraph',
+                order: 1.0,
+                text: '',
+                richText: null,
+              })
+            }
+          }
+        }}
+      >
+        {sortedBlocks.length === 0 && (
+          <div className="empty-state-placeholder text-gray-400 text-sm py-4 px-2 cursor-text hover:bg-gray-50/50 rounded-lg transition-colors select-none">
+            Press here to start writing, or type '/' for commands...
+          </div>
+        )}
         <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
           <SortableContext items={sortedBlocks.map((b) => b.id)} strategy={verticalListSortingStrategy}>
             {sortedBlocks.map((block) => {

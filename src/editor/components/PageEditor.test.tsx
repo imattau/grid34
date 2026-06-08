@@ -56,4 +56,39 @@ describe('PageEditor', () => {
     expect(screen.getByLabelText('Paragraph text')).toHaveTextContent('Hello')
     expect(screen.getByDisplayValue('My Page')).toBeInTheDocument()
   })
+
+  it('renders placeholder and creates paragraph block when clicking empty content area', () => {
+    const emptyPage: Page = { id: 'page-1', title: 'Empty Page', parentId: null, order: 0, updatedAt: 1000, blocks: [] }
+    const repoStore: Partial<EditorRepoStore> = {
+      pageTree$: of({ pages: {} }),
+      observePage: vi.fn(() => of({ status: 'ready', page: emptyPage })),
+    }
+    const draftStore: Partial<DraftStore> = { stage: vi.fn(), drafts$: of({}), flush: vi.fn() }
+    const dbViewStore: Partial<DbViewStore> = { observeRows: vi.fn(() => of([])), notifyChanged: vi.fn() }
+
+    const { container } = render(
+      <RepoStoreContext.Provider value={repoStore as EditorRepoStore}>
+        <DraftStoreContext.Provider value={draftStore as DraftStore}>
+          <DbViewStoreContext.Provider value={dbViewStore as DbViewStore}>
+            <PageEditor pageId="page-1" />
+          </DbViewStoreContext.Provider>
+        </DraftStoreContext.Provider>
+      </RepoStoreContext.Provider>
+    )
+
+    expect(screen.getByText(/press here to start writing/i)).toBeInTheDocument()
+    
+    // Click content container
+    const contentDiv = container.querySelector('.page-editor__content')
+    expect(contentDiv).toBeInTheDocument()
+    if (contentDiv) {
+      contentDiv.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    }
+
+    expect(draftStore.stage).toHaveBeenCalledWith(
+      'page-1',
+      expect.any(String),
+      expect.objectContaining({ type: 'paragraph', text: '' })
+    )
+  })
 })
