@@ -34,7 +34,7 @@ export function TodoBlock({
           ariaLabel="Todo list item"
           placeholder="To-do"
           className="w-full text-base leading-relaxed"
-          enterBehavior="newline"
+          enterBehavior="split-block"
           onSplitBlock={onSplitBlock}
           onMergeWithPrevious={onMergeWithPrevious}
           onOpenSlashMenu={onOpenSlashMenu}
