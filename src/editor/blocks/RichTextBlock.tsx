@@ -31,21 +31,38 @@ export function RichTextBlock({
 }: RichTextBlockProps) {
   const draftStore = useDraftStore()
   const isApplyingExternalChangeRef = useRef(false)
+  const isListBlock = block.type === 'list'
+  let initialContent = block.content.richText || (block.content.text as string) || ''
+  if (isListBlock) {
+    const kind = block.content.kind === 'numbered' ? 'numbered' : 'bullet'
+    const tag = kind === 'numbered' ? 'ol' : 'ul'
+    if (typeof initialContent === 'string') {
+      const trimmed = initialContent.trim()
+      if (!trimmed) {
+        initialContent = `<${tag}><li></li></${tag}>`
+      } else if (!trimmed.startsWith(`<${tag}>`)) {
+        initialContent = `<${tag}><li>${trimmed}</li></${tag}>`
+      }
+    }
+  }
+  console.log('DEBUG RichTextBlock:', { id: block.id, type: block.type, isListBlock, content: block.content, initialContent })
+
   const lastSyncedContentRef = useRef(
-    serializeRichTextContent(block.content.richText || (block.content.text as string) || '')
+    serializeRichTextContent(initialContent)
   )
 
-  const initialContent = block.content.richText || (block.content.text as string) || ''
+  const starterKitOptions: Record<string, boolean | Record<string, unknown>> = {
+    heading: false,
+  }
+  if (!isListBlock) {
+    starterKitOptions.bulletList = false
+    starterKitOptions.orderedList = false
+    starterKitOptions.listItem = false
+  }
 
   const editor = useEditor({
     extensions: [
-      StarterKit.configure({
-        // Disable extensions that conflict with block-level granularity
-        heading: false,
-        bulletList: false,
-        orderedList: false,
-        listItem: false,
-      }),
+      StarterKit.configure(starterKitOptions),
     ],
     content: initialContent,
     editorProps: {
@@ -93,6 +110,10 @@ export function RichTextBlock({
 
     const handleKeyDown = (view: any, event: KeyboardEvent) => {
       if (event.key === 'Enter') {
+        if (isListBlock) {
+          // Let Tiptap handle Enter natively inside list blocks (creates new list item within same block)
+          return false
+        }
         if (shouldSplitRichTextBlockOnEnter(enterBehavior, event.shiftKey)) {
           const { selection } = editor.state
           if (selection.empty) {
@@ -134,13 +155,26 @@ export function RichTextBlock({
         handleKeyDown,
       },
     })
-  }, [editor, block.id, enterBehavior, onSplitBlock, onMergeWithPrevious])
+  }, [editor, block.id, enterBehavior, onSplitBlock, onMergeWithPrevious, isListBlock])
 
   // Sync external changes (e.g. from collab or other peers)
   useEffect(() => {
     if (!editor) return
 
-    const incomingContent = block.content.richText || (block.content.text as string) || ''
+    let incomingContent = block.content.richText || (block.content.text as string) || ''
+    if (isListBlock) {
+      const kind = block.content.kind === 'numbered' ? 'numbered' : 'bullet'
+      const tag = kind === 'numbered' ? 'ol' : 'ul'
+      if (typeof incomingContent === 'string') {
+        const trimmed = incomingContent.trim()
+        if (!trimmed) {
+          incomingContent = `<${tag}><li></li></${tag}>`
+        } else if (!trimmed.startsWith(`<${tag}>`)) {
+          incomingContent = `<${tag}><li>${trimmed}</li></${tag}>`
+        }
+      }
+    }
+
     if (
       !shouldApplyIncomingRichTextContent({
         incomingContent,
@@ -158,7 +192,7 @@ export function RichTextBlock({
     } finally {
       isApplyingExternalChangeRef.current = false
     }
-  }, [editor, block.content])
+  }, [editor, block.content, isListBlock])
 
-  return <EditorContent editor={editor} />
+  return <EditorContent editor={editor} className="flex-1 w-full" />
 }

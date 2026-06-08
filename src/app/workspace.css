@@ -20,6 +20,164 @@
   --font-mono: ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, Liberation Mono, monospace;
 }
 
+.dark {
+  --color-bg: #121212;
+  --color-sidebar: #1a1a1a;
+  --color-border: rgba(255, 255, 255, 0.08);
+  --color-border-strong: rgba(255, 255, 255, 0.16);
+  --color-text: #e3e3e3;
+  --color-muted: rgba(255, 255, 255, 0.5);
+  --color-accent: #2383e2;
+  --color-accent-soft: rgba(35, 131, 226, 0.15);
+  --color-hover: rgba(255, 255, 255, 0.06);
+}
+
+/* Hardcoded light/dark theme overrides for specific components */
+.dark body {
+  background-color: var(--color-bg) !important;
+}
+
+.dark .workspace-sidebar {
+  background-color: var(--color-sidebar) !important;
+  border-right: 1px solid var(--color-border) !important;
+}
+
+.dark .sidebar-control--profile span.text-gray-800,
+.dark .sidebar-control--profile span.text-gray-500 {
+  color: #e3e3e3 !important;
+}
+
+.dark .workspace-main {
+  background: #1e1e1e !important;
+}
+
+.dark .workspace-toolbar {
+  border-bottom: 1px solid var(--color-border) !important;
+}
+
+.dark .workspace-status {
+  color: #2dd4bf !important;
+  background: #115e59 !important;
+}
+
+.dark .page-shell {
+  background: #121212 !important;
+}
+
+.dark .page-editor,
+.dark .locked-page {
+  background: #1a1a1a !important;
+  color: var(--color-text) !important;
+}
+
+.dark .page-editor__title {
+  color: #ffffff !important;
+}
+
+.dark .page-editor__title:hover {
+  background-color: rgba(255, 255, 255, 0.03) !important;
+}
+
+.dark .ProseMirror {
+  color: var(--color-text) !important;
+}
+
+.dark .ProseMirror pre,
+.dark .ProseMirror code {
+  background: rgba(255, 255, 255, 0.08) !important;
+  color: #e3e3e3 !important;
+}
+
+/* Grid34 Notion database blocks in dark mode */
+.dark .page-block--database th,
+.dark .page-block--database td {
+  border-color: var(--color-border) !important;
+}
+
+.dark .page-block--database th {
+  background: rgba(255, 255, 255, 0.03) !important;
+  color: var(--color-muted) !important;
+}
+
+.dark .page-block--database input[type='text'] {
+  color: var(--color-text) !important;
+}
+
+.dark .page-block--database input[type='text']:focus {
+  background: #282828 !important;
+}
+
+/* Dropdown menus, popup panels, and interactive elements */
+.dark .bg-white,
+.dark [class*="bg-white"] {
+  background-color: #252525 !important;
+}
+
+.dark .border-gray-200,
+.dark [class*="border-gray-200"] {
+  border-color: rgba(255, 255, 255, 0.1) !important;
+}
+
+.dark .text-gray-950,
+.dark .text-gray-900,
+.dark .text-gray-800,
+.dark .text-gray-700 {
+  color: #e3e3e3 !important;
+}
+
+.dark .text-gray-500,
+.dark .text-gray-400 {
+  color: #a3a3a3 !important;
+}
+
+.dark .hover\:bg-gray-100:hover,
+.dark .hover\:bg-gray-50:hover,
+.dark [class*="hover:bg-gray-100"]:hover,
+.dark [class*="hover:bg-gray-50"]:hover {
+  background-color: rgba(255, 255, 255, 0.08) !important;
+}
+
+.dark .bg-gray-50,
+.dark .bg-gray-100 {
+  background-color: rgba(255, 255, 255, 0.04) !important;
+}
+/* CEK Keys Manager styling in dark mode */
+.dark .sidebar-section span.text-gray-400 {
+  color: rgba(255, 255, 255, 0.4) !important;
+}
+
+.dark .sidebar-section [class*="bg-gray-50/50"],
+.dark .sidebar-section [class*="bg-gray-50\/50"] {
+  background-color: rgba(255, 255, 255, 0.02) !important;
+  border-color: rgba(255, 255, 255, 0.08) !important;
+}
+
+.dark .sidebar-section span.text-gray-600 {
+  color: #eeeeee !important;
+}
+
+.dark .sidebar-section .bg-white {
+  background-color: #121212 !important;
+  border-color: rgba(255, 255, 255, 0.1) !important;
+  color: #eeeeee !important;
+}
+
+.dark .sidebar-section input[type='text'] {
+  background-color: #121212 !important;
+  border-color: rgba(255, 255, 255, 0.1) !important;
+  color: #eeeeee !important;
+}
+
+.dark .sidebar-section button {
+  background-color: rgba(255, 255, 255, 0.05) !important;
+  color: #eeeeee !important;
+  border-color: rgba(255, 255, 255, 0.1) !important;
+}
+
+.dark .sidebar-section button:hover {
+  background-color: rgba(255, 255, 255, 0.1) !important;
+}
+
 html,
 body,
 #root {
@@ -573,4 +731,22 @@ button {
   .page-shell {
     padding: 24px;
   }
+}
+
+/* List block styling to override Tailwind reset inside ProseMirror */
+.ProseMirror ul {
+  list-style-type: disc !important;
+  margin-left: 1.5rem !important;
+  padding-left: 0.5rem !important;
+}
+
+.ProseMirror ol {
+  list-style-type: decimal !important;
+  margin-left: 1.5rem !important;
+  padding-left: 0.5rem !important;
+}
+
+.ProseMirror li {
+  margin-top: 0.25rem !important;
+  margin-bottom: 0.25rem !important;
 }

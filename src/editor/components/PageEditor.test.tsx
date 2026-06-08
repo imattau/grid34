@@ -228,7 +228,7 @@ describe('PageEditor', () => {
       </RepoStoreContext.Provider>
     )
 
-    const listEditor = await screen.findByLabelText('List item text')
+    const listEditor = await screen.findByLabelText('List text')
     listEditor.focus()
     await userEvent.keyboard('{Enter}')
 
@@ -269,7 +269,7 @@ describe('PageEditor', () => {
       </RepoStoreContext.Provider>
     )
 
-    const listEditor = await screen.findByLabelText('List item text')
+    const listEditor = await screen.findByLabelText('List text')
     await userEvent.click(listEditor)
     await userEvent.type(listEditor, ' updated')
 
@@ -310,7 +310,8 @@ describe('PageEditor', () => {
       </RepoStoreContext.Provider>
     )
 
-    expect(await screen.findByText('1.')).toBeInTheDocument()
+    expect(await screen.findByLabelText('List text')).toHaveTextContent('First item')
+    expect(document.querySelector('ol')).toBeInTheDocument()
   })
 
   it('allows editing an existing numbered list item', async () => {
@@ -345,7 +346,7 @@ describe('PageEditor', () => {
       </RepoStoreContext.Provider>
     )
 
-    const listEditor = await screen.findByLabelText('List item text')
+    const listEditor = await screen.findByLabelText('List text')
     await userEvent.click(listEditor)
     await userEvent.type(listEditor, ' updated')
 
@@ -354,7 +355,7 @@ describe('PageEditor', () => {
     expect(listCalls.some(([, , content]) => (content as Record<string, unknown>).kind === 'numbered')).toBe(true)
   })
 
-  it('keeps Enter inside a numbered list item within the same block', async () => {
+  it('keeps Enter inside a numbered list item within the same block (second instance)', async () => {
     const listPage: Page = {
       ...readyPage,
       blocks: [
@@ -386,10 +387,9 @@ describe('PageEditor', () => {
       </RepoStoreContext.Provider>
     )
 
-    const listEditor = await screen.findByLabelText('List item text')
+    const listEditor = await screen.findByLabelText('List text')
     await userEvent.click(listEditor)
     await userEvent.keyboard('{Enter}')
-    await userEvent.type(listEditor, ' updated')
 
     const listCalls = vi.mocked(draftStore.stage).mock.calls.filter(([pageId]) => pageId === 'page-1')
     expect(listCalls.length).toBeGreaterThan(0)

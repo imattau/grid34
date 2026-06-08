@@ -19,22 +19,23 @@ function renderWithDraftStore(block: Block, draftStore: Partial<DraftStore>) {
 }
 
 describe('ListBlock', () => {
-  it('renders a bullet list item marker for kind "bullet"', () => {
+  it('renders a bullet list item marker for kind "bullet"', async () => {
     renderWithDraftStore(makeBlock(), { stage: vi.fn() })
-    expect(screen.getByText('•')).toBeInTheDocument()
-    expect(screen.getByLabelText('List item text')).toHaveTextContent('First item')
+    expect(await screen.findByLabelText('List text')).toHaveTextContent('First item')
+    expect(document.querySelector('ul')).toBeInTheDocument()
   })
 
-  it('renders a numbered marker for kind "numbered"', () => {
+  it('renders a numbered marker for kind "numbered"', async () => {
     renderWithDraftStore(makeBlock({ content: { text: 'First item', kind: 'numbered' } }), { stage: vi.fn() })
-    expect(screen.getByText('1.')).toBeInTheDocument()
+    expect(await screen.findByLabelText('List text')).toHaveTextContent('First item')
+    expect(document.querySelector('ol')).toBeInTheDocument()
   })
 
   it('calls DraftStore.stage preserving the kind when the user edits the text', async () => {
     const stage = vi.fn()
     renderWithDraftStore(makeBlock(), { stage })
 
-    const textbox = screen.getByLabelText('List item text')
+    const textbox = screen.getByLabelText('List text')
     await userEvent.clear(textbox)
     await userEvent.type(textbox, 'Updated item')
 

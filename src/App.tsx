@@ -91,6 +91,26 @@ function WorkspaceView({ workspace }: { workspace: Workspace }) {
     return sessionStorage.getItem('grid34_workspaces_collapsed') !== 'true'
   })
   const [accessibleWorkspaceIds, setAccessibleWorkspaceIds] = useState<string[]>([])
+  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
+    if (typeof window === 'undefined') return 'light'
+    const stored = localStorage.getItem('grid34_theme')
+    if (stored === 'dark' || stored === 'light') return stored
+    if (typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) return 'dark'
+    return 'light'
+  })
+
+  useEffect(() => {
+    if (theme === 'dark') {
+      document.documentElement.classList.add('dark')
+    } else {
+      document.documentElement.classList.remove('dark')
+    }
+    localStorage.setItem('grid34_theme', theme)
+  }, [theme])
+
+  const toggleTheme = () => {
+    setTheme((prev) => (prev === 'light' ? 'dark' : 'light'))
+  }
 
   useEffect(() => {
     setSelectedPageId(workspace.selectedPageId)
@@ -458,7 +478,26 @@ function WorkspaceView({ workspace }: { workspace: Workspace }) {
               <section className="workspace-main" aria-label="Workspace canvas">
                 <div className="workspace-toolbar">
                   <p className="workspace-path">grid34 / connected editor</p>
-                  <p className="workspace-status">Local draft checkpointing enabled</p>
+                  <div className="flex items-center gap-3">
+                    <p className="workspace-status">Local draft checkpointing enabled</p>
+                    <button
+                      type="button"
+                      onClick={toggleTheme}
+                      className="p-1.5 rounded-lg text-gray-500 hover:text-gray-900 hover:bg-gray-100 transition-all duration-200 flex items-center justify-center dark:text-gray-400 dark:hover:text-gray-100 dark:hover:bg-gray-800 cursor-pointer"
+                      title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+                      aria-label="Toggle dark mode"
+                    >
+                      {theme === 'dark' ? (
+                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364-6.364l-.707.707M6.343 17.657l-.707.707m0-12.728l.707.707m12.728 12.728l.707.707M12 8a4 4 0 100 8 4 4 0 000-8z" />
+                        </svg>
+                      ) : (
+                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
+                        </svg>
+                      )}
+                    </button>
+                  </div>
                 </div>
 
                 <div className="page-shell">
