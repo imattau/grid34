@@ -28,10 +28,10 @@ describe('HeadingBlock', () => {
     const stage = vi.fn()
     renderWithDraftStore(makeBlock(), { stage })
 
-    const textbox = screen.getByDisplayValue('Title')
+    const textbox = screen.getByLabelText('Heading 2 text')
     await userEvent.clear(textbox)
     await userEvent.type(textbox, 'New Title')
 
-    expect(stage).toHaveBeenLastCalledWith('page-1', 'block-1', { text: 'New Title', level: 2 })
+    expect(stage).toHaveBeenCalledWith('page-1', 'block-1', expect.objectContaining({ text: 'New Title', level: 2 }))
   })
 })

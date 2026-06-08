@@ -1,21 +1,31 @@
-import { useState } from 'react'
-import { useDraftStore } from '../contexts/storeContexts'
 import type { Block } from '../../storage/repo/types'
+import { RichTextBlock } from './RichTextBlock'
 
 export interface BlockProps {
   block: Block
   pageId: string
+  onSplitBlock?: (blockId: string, before: string, after: string) => void
+  onMergeWithPrevious?: (blockId: string) => void
+  onOpenSlashMenu?: (blockId: string, rect: DOMRect) => void
 }
 
-export function ParagraphBlock({ block, pageId }: BlockProps) {
-  const draftStore = useDraftStore()
-  const [text, setText] = useState(() => (block.content.text as string) ?? '')
-
-  function handleChange(event: React.ChangeEvent<HTMLInputElement>) {
-    const value = event.target.value
-    setText(value)
-    draftStore.stage(pageId, block.id, { ...block.content, text: value })
-  }
-
-  return <input type="text" aria-label="Paragraph text" value={text} onChange={handleChange} />
+export function ParagraphBlock({
+  block,
+  pageId,
+  onSplitBlock,
+  onMergeWithPrevious,
+  onOpenSlashMenu,
+}: BlockProps) {
+  return (
+    <RichTextBlock
+      block={block}
+      pageId={pageId}
+      ariaLabel="Paragraph text"
+      placeholder="Type '/' for commands..."
+      className="w-full text-base leading-relaxed"
+      onSplitBlock={onSplitBlock}
+      onMergeWithPrevious={onMergeWithPrevious}
+      onOpenSlashMenu={onOpenSlashMenu}
+    />
+  )
 }

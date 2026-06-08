@@ -25,6 +25,10 @@ export interface DraftStore {
   stage(pageId: string, blockId: string, content: Record<string, unknown>): void
   drafts$: Observable<DraftMap>
   flush(): Promise<void>
+  createPage(parentId: string | null, title: string): string
+  renamePage(pageId: string, title: string): void
+  deletePage(pageId: string): void
+  changePageIcon(pageId: string, icon: string): void
 }
 
 export interface CreateDraftStoreOptions {
@@ -84,13 +88,24 @@ export function createDraftStore(options: CreateDraftStoreOptions): DraftStore {
     const page = repoStore.getPage(pageId)
     if (!page) return
 
-    const updatedBlocks = page.blocks.map((block) => {
-      const draft = drafts[block.id]
-      if (draft && draft.pageId === pageId) {
-        return { ...block, content: draft.content, updatedAt: Date.now() }
-      }
-      return block
-    })
+    const updatedBlocks = page.blocks
+      .map((block) => {
+        const draft = drafts[block.id]
+        if (draft && draft.pageId === pageId) {
+          const { type, order, parentBlockId, deleted, ...content } = draft.content
+          if (deleted === true) return null
+          return {
+            ...block,
+            type: typeof type === 'string' ? type : block.type,
+            order: typeof order === 'number' ? order : block.order,
+            parentBlockId: typeof parentBlockId === 'string' || parentBlockId === null ? parentBlockId : block.parentBlockId,
+            content,
+            updatedAt: Date.now(),
+          }
+        }
+        return block
+      })
+      .filter((b): b is Block => b !== null)
     const updatedPage: Page = { ...page, blocks: updatedBlocks, updatedAt: Date.now() }
 
     const template = commitBuilder.buildPatchEventTemplate({
@@ -138,9 +153,65 @@ export function createDraftStore(options: CreateDraftStoreOptions): DraftStore {
     }
   }
 
+  async function publishPagePatch(page: Page): Promise<void> {
+    const template = commitBuilder.buildPatchEventTemplate({
+      page,
+      repoId,
+      cek,
+      createdAt: Math.floor(Date.now() / 1000),
+    })
+    try {
+      await publisher.publishPatch(template, signer, relayPublisher, relayUrls)
+    } catch (err) {
+      console.error('Failed to publish page patch', err)
+    }
+  }
+
+  function createPage(parentId: string | null, title: string): string {
+    const pageId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2, 15)
+    const newPage: Page = {
+      id: pageId,
+      title,
+      parentId,
+      order: Date.now(),
+      blocks: [],
+      updatedAt: Date.now(),
+    }
+    void publishPagePatch(newPage)
+    return pageId
+  }
+
+  function renamePage(pageId: string, title: string): void {
+    const page = repoStore.getPage(pageId)
+    if (page) {
+      const updatedPage = { ...page, title, updatedAt: Date.now() }
+      void publishPagePatch(updatedPage)
+    }
+  }
+
+  function deletePage(pageId: string): void {
+    const page = repoStore.getPage(pageId)
+    if (page) {
+      const updatedPage = { ...page, deleted: true, updatedAt: Date.now() }
+      void publishPagePatch(updatedPage)
+    }
+  }
+
+  function changePageIcon(pageId: string, icon: string): void {
+    const page = repoStore.getPage(pageId)
+    if (page) {
+      const updatedPage = { ...page, icon, updatedAt: Date.now() }
+      void publishPagePatch(updatedPage)
+    }
+  }
+
   return {
     stage,
     drafts$: draftsSubject.asObservable(),
     flush,
+    createPage,
+    renamePage,
+    deletePage,
+    changePageIcon,
   }
 }

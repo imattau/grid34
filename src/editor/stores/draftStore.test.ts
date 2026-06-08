@@ -217,3 +217,98 @@ describe('DraftStore offline queue and retry', () => {
     vi.useRealTimers()
   })
 })
+
+describe('DraftStore Page CRUD', () => {
+  let repoStore: ReturnType<typeof makeFakeRepoStore>
+  let commitBuilder: CommitBuilder
+  let publisher: Publisher
+  let store: DraftStore
+
+  beforeEach(() => {
+    repoStore = makeFakeRepoStore({ pages: { 'page-1': makePage() } })
+    commitBuilder = {
+      buildPatchEventTemplate: vi.fn(({ page }) => ({
+        kind: 1617,
+        created_at: 0,
+        tags: [['file', `pages/${page.id}.json`]],
+        content: 'cipher',
+      })),
+    }
+    publisher = {
+      publishPatch: vi.fn(async () => ({
+        id: 'evt-1',
+        kind: 1617,
+        created_at: 0,
+        tags: [],
+        content: 'cipher',
+        pubkey: 'pk',
+        sig: 'sig',
+      })),
+    }
+    store = createDraftStore({
+      repoStore,
+      commitBuilder,
+      publisher,
+      signer: {} as never,
+      relayPublisher: {} as never,
+      relayUrls: ['wss://relay-a'],
+      repoId: 'workspace-repo',
+      cek: new Uint8Array(32),
+      debounceMs: 1000,
+    })
+  })
+
+  it('stages page creation and publishes immediately', () => {
+    const pageId = store.createPage(null, 'New Root Page')
+    expect(pageId).toBeDefined()
+    expect(commitBuilder.buildPatchEventTemplate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        page: expect.objectContaining({
+          id: pageId,
+          title: 'New Root Page',
+          parentId: null,
+        }),
+      })
+    )
+    expect(publisher.publishPatch).toHaveBeenCalledTimes(1)
+  })
+
+  it('stages page rename and publishes immediately', () => {
+    store.renamePage('page-1', 'Renamed Title')
+    expect(commitBuilder.buildPatchEventTemplate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        page: expect.objectContaining({
+          id: 'page-1',
+          title: 'Renamed Title',
+        }),
+      })
+    )
+    expect(publisher.publishPatch).toHaveBeenCalledTimes(1)
+  })
+
+  it('stages page deletion and publishes immediately', () => {
+    store.deletePage('page-1')
+    expect(commitBuilder.buildPatchEventTemplate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        page: expect.objectContaining({
+          id: 'page-1',
+          deleted: true,
+        }),
+      })
+    )
+    expect(publisher.publishPatch).toHaveBeenCalledTimes(1)
+  })
+
+  it('stages page icon change and publishes immediately', () => {
+    store.changePageIcon('page-1', '🚀')
+    expect(commitBuilder.buildPatchEventTemplate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        page: expect.objectContaining({
+          id: 'page-1',
+          icon: '🚀',
+        }),
+      })
+    )
+    expect(publisher.publishPatch).toHaveBeenCalledTimes(1)
+  })
+})

@@ -3,8 +3,9 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { of } from 'rxjs'
 import { PageTree } from './PageTree'
-import { RepoStoreContext, type EditorRepoStore } from '../contexts/storeContexts'
+import { RepoStoreContext, DraftStoreContext, type EditorRepoStore } from '../contexts/storeContexts'
 import type { PageTreeState } from '../../storage/repo/types'
+import type { DraftStore } from '../stores/draftStore'
 
 const treeState: PageTreeState = {
   pages: {
@@ -18,9 +19,16 @@ function renderTree(onSelect: (pageId: string) => void) {
     pageTree$: of(treeState),
     observePage: vi.fn(),
   }
+  const draftStore: Partial<DraftStore> = {
+    createPage: vi.fn(() => 'new-page-id'),
+    renamePage: vi.fn(),
+    deletePage: vi.fn(),
+  }
   return render(
     <RepoStoreContext.Provider value={repoStore as EditorRepoStore}>
-      <PageTree onSelectPage={onSelect} selectedPageId={null} />
+      <DraftStoreContext.Provider value={draftStore as DraftStore}>
+        <PageTree onSelectPage={onSelect} selectedPageId={null} />
+      </DraftStoreContext.Provider>
     </RepoStoreContext.Provider>
   )
 }

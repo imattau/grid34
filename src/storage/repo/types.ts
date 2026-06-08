@@ -14,6 +14,8 @@ export interface Page {
   order: number
   blocks: Block[]
   updatedAt: number
+  icon?: string
+  deleted?: boolean
 }
 
 export interface PageTreeState {

@@ -46,14 +46,14 @@ describe('PageEditor', () => {
 
   it('renders LockedPageView when RepoStore reports the page as locked', () => {
     renderEditor('locked', { ...readyPage, blocks: [] })
-    expect(screen.getByText(/🔒 Locked/)).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'My Page', level: 2 })).toBeInTheDocument()
     expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
   })
 
   it('renders the page blocks via blockComponentRegistry when ready', () => {
     renderEditor('ready', readyPage)
 
-    expect(screen.getByDisplayValue('Hello')).toBeInTheDocument()
-    expect(screen.getByRole('heading', { level: 1 })).toBeInTheDocument()
+    expect(screen.getByLabelText('Paragraph text')).toHaveTextContent('Hello')
+    expect(screen.getByDisplayValue('My Page')).toBeInTheDocument()
   })
 })

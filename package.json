@@ -13,9 +13,14 @@
   "dependencies": {
     "@chainsafe/libp2p-noise": "^17.0.0",
     "@chainsafe/libp2p-yamux": "^8.0.1",
+    "@dnd-kit/core": "^6.3.1",
+    "@dnd-kit/sortable": "^10.0.0",
+    "@dnd-kit/utilities": "^3.2.2",
     "@libp2p/gossipsub": "^16.0.2",
     "@libp2p/memory": "^2.0.21",
     "@multiformats/multiaddr": "^13.0.3",
+    "@tiptap/react": "^3.26.0",
+    "@tiptap/starter-kit": "^3.26.0",
     "applesauce-core": "*",
     "applesauce-loaders": "*",
     "applesauce-relay": "*",
@@ -30,6 +35,7 @@
   },
   "devDependencies": {
     "@libp2p/interface": "^3.2.3",
+    "@tailwindcss/postcss": "^4.3.0",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",
@@ -37,7 +43,10 @@
     "@types/react-dom": "*",
     "@types/sql.js": "*",
     "@vitejs/plugin-react": "*",
+    "autoprefixer": "^10.5.0",
     "jsdom": "*",
+    "postcss": "^8.5.15",
+    "tailwindcss": "^4.3.0",
     "typescript": "*",
     "vite": "*",
     "vitest": "*"

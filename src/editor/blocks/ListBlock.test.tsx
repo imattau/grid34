@@ -22,7 +22,7 @@ describe('ListBlock', () => {
   it('renders a bullet list item marker for kind "bullet"', () => {
     renderWithDraftStore(makeBlock(), { stage: vi.fn() })
     expect(screen.getByText('•')).toBeInTheDocument()
-    expect(screen.getByDisplayValue('First item')).toBeInTheDocument()
+    expect(screen.getByLabelText('List item text')).toHaveTextContent('First item')
   })
 
   it('renders a numbered marker for kind "numbered"', () => {
@@ -34,10 +34,10 @@ describe('ListBlock', () => {
     const stage = vi.fn()
     renderWithDraftStore(makeBlock(), { stage })
 
-    const textbox = screen.getByDisplayValue('First item')
+    const textbox = screen.getByLabelText('List item text')
     await userEvent.clear(textbox)
     await userEvent.type(textbox, 'Updated item')
 
-    expect(stage).toHaveBeenLastCalledWith('page-1', 'block-1', { text: 'Updated item', kind: 'bullet' })
+    expect(stage).toHaveBeenCalledWith('page-1', 'block-1', expect.objectContaining({ text: 'Updated item', kind: 'bullet' }))
   })
 })

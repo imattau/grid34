@@ -4,6 +4,7 @@ CREATE TABLE pages (
   title TEXT NOT NULL,
   parent_id TEXT,
   order_index INTEGER NOT NULL,
+  icon TEXT,
   updated_at INTEGER NOT NULL
 );
 

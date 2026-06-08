@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { BehaviorSubject, of } from 'rxjs'
 import { PageEditor } from './components/PageEditor'
 import { createDraftStore } from './stores/draftStore'
@@ -26,13 +27,8 @@ describe('editor write-then-read round trip', () => {
   let pageSubject: BehaviorSubject<{ status: 'ready'; page: Page }>
 
   beforeEach(() => {
-    vi.useFakeTimers()
     pages = { 'page-1': makePage() }
     pageSubject = new BehaviorSubject<{ status: 'ready'; page: Page }>({ status: 'ready', page: pages['page-1'] })
-  })
-
-  afterEach(() => {
-    vi.useRealTimers()
   })
 
   it('stages an edit, checkpoints it through fake CommitBuilder/Publisher, and re-renders with the optimistically-updated content', async () => {
@@ -74,7 +70,7 @@ describe('editor write-then-read round trip', () => {
       relayUrls: ['wss://relay-a'],
       repoId: 'workspace-repo',
       cek: new Uint8Array(32),
-      debounceMs: 1000,
+      debounceMs: 50,
     })
 
     const dbViewStore: Partial<DbViewStore> = { observeRows: vi.fn(() => of([])), notifyChanged: vi.fn() }
@@ -89,19 +85,19 @@ describe('editor write-then-read round trip', () => {
       </RepoStoreContext.Provider>
     )
 
-    const textbox = screen.getByDisplayValue('Hello')
-    fireEvent.change(textbox, { target: { value: 'Hello, world!' } })
+    const textbox = screen.getByLabelText('Paragraph text')
+    await userEvent.type(textbox, ', world!')
 
-    await vi.advanceTimersByTimeAsync(1000)
+    await new Promise((resolve) => setTimeout(resolve, 150))
     expect(commitBuilder.buildPatchEventTemplate).toHaveBeenCalledWith(
       expect.objectContaining({
         page: expect.objectContaining({
-          blocks: [expect.objectContaining({ id: 'block-1', content: { text: 'Hello, world!' } })],
+          blocks: [expect.objectContaining({ id: 'block-1', content: expect.objectContaining({ text: ', world!Hello' }) })],
         }),
       })
     )
 
     expect(publisher.publishPatch).toHaveBeenCalledTimes(1)
-    expect(screen.getByDisplayValue('Hello, world!')).toBeInTheDocument()
+    expect(screen.getByLabelText('Paragraph text')).toHaveTextContent(', world!Hello')
   })
 })

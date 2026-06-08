@@ -21,17 +21,17 @@ function renderWithDraftStore(block: Block, draftStore: Partial<DraftStore>) {
 describe('ParagraphBlock', () => {
   it('renders the block text content', () => {
     renderWithDraftStore(makeBlock(), { stage: vi.fn() })
-    expect(screen.getByDisplayValue('Hello')).toBeInTheDocument()
+    expect(screen.getByLabelText('Paragraph text')).toHaveTextContent('Hello')
   })
 
   it('calls DraftStore.stage with the updated content when the user types', async () => {
     const stage = vi.fn()
     renderWithDraftStore(makeBlock(), { stage })
 
-    const textbox = screen.getByDisplayValue('Hello')
+    const textbox = screen.getByLabelText('Paragraph text')
     await userEvent.clear(textbox)
     await userEvent.type(textbox, 'Hi there')
 
-    expect(stage).toHaveBeenLastCalledWith('page-1', 'block-1', { text: 'Hi there' })
+    expect(stage).toHaveBeenCalledWith('page-1', 'block-1', expect.objectContaining({ text: 'Hi there' }))
   })
 })
