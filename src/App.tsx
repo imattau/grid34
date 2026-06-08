@@ -26,6 +26,7 @@ interface NostrProfile {
 function WorkspaceView({ workspace }: { workspace: DemoWorkspace }) {
   const [selectedPageId, setSelectedPageId] = useState(workspace.selectedPageId)
   const [user, setUser] = useState<NostrProfile | null>(null)
+  const [showUserMenu, setShowUserMenu] = useState(false)
 
   useEffect(() => {
     setSelectedPageId(workspace.selectedPageId)
@@ -82,52 +83,72 @@ function WorkspaceView({ workspace }: { workspace: DemoWorkspace }) {
           <main className="workspace-shell">
             <div className="workspace-frame">
               <aside className="workspace-sidebar">
-                <div className="workspace-brand">
-                  <p className="eyebrow">grid34</p>
-                  <h1>Workspace</h1>
-                  <p>Pages, drafts, and database views in one place.</p>
-                </div>
-
-                <div className="sidebar-profile">
-                  {user ? (
-                    <div className="flex items-center justify-between gap-2 p-2 bg-white/50 border border-[var(--color-border)] rounded-lg shadow-sm">
-                      <div className="flex items-center gap-2 min-w-0">
-                        <img
-                          src={user.picture}
-                          alt={user.name}
-                          className="w-8 h-8 rounded-full border border-gray-100 object-cover flex-shrink-0"
-                          onError={(e) => {
-                            e.currentTarget.src = `https://robohash.org/${user.pubkey}.png?set=set4`
-                          }}
-                        />
-                        <div className="flex flex-col min-w-0">
-                          <span className="text-xs font-semibold text-gray-800 truncate">{user.name}</span>
-                          <span className="text-[9px] text-gray-400 font-mono truncate">{user.pubkey.substring(0, 8)}</span>
-                        </div>
+                {/* Notion Workspace Switcher / Profile selector */}
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={() => setShowUserMenu(!showUserMenu)}
+                    className="w-full flex items-center justify-between gap-2 p-1.5 rounded-lg hover:bg-gray-200/50 transition-colors text-left select-none cursor-pointer"
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      <img
+                        src={user ? user.picture : 'https://robohash.org/guest.png?set=set4'}
+                        alt="Avatar"
+                        className="w-6 h-6 rounded-full border border-gray-200/80 object-cover flex-shrink-0"
+                        onError={(e) => {
+                          e.currentTarget.src = `https://robohash.org/guest.png?set=set4`
+                        }}
+                      />
+                      <div className="flex flex-col min-w-0">
+                        <span className="text-xs font-semibold text-gray-800 truncate">
+                          {user ? user.name : 'Guest User'}
+                        </span>
+                        <span className="text-[10px] text-gray-400 font-mono truncate">
+                          {user ? `Workspace (npub...${user.pubkey.substring(0, 4)})` : 'Local Workspace'}
+                        </span>
                       </div>
-                      <button
-                        type="button"
-                        onClick={handleLogout}
-                        className="text-xs text-gray-400 hover:text-red-500 hover:bg-gray-100/80 p-1.5 rounded transition-colors"
-                        title="Log out"
-                      >
-                        <svg className="w-4.5 h-4.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
-                        </svg>
-                      </button>
                     </div>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={handleLogin}
-                      className="w-full flex items-center justify-center gap-2 py-1.5 px-3 border border-[var(--color-border)] hover:border-[var(--color-border-strong)] rounded-lg text-xs font-semibold text-gray-600 hover:text-gray-900 hover:bg-white/50 transition-all shadow-sm active:scale-[0.98]"
-                    >
-                      <span className="text-yellow-500">⚡</span> Connect Nostr (NIP-07)
-                    </button>
+                    <svg className="w-3 h-3 text-gray-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </button>
+
+                  {showUserMenu && (
+                    <>
+                      <div className="fixed inset-0 z-40" onClick={() => setShowUserMenu(false)} />
+                      <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg py-1 z-50 animate-in fade-in slide-in-from-top-1 duration-150">
+                        {user ? (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              handleLogout()
+                              setShowUserMenu(false)
+                            }}
+                            className="w-full text-left px-3 py-2 text-xs text-red-600 hover:bg-red-50 transition-colors font-medium flex items-center gap-1.5"
+                          >
+                            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                            </svg>
+                            Sign out of Nostr
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              handleLogin()
+                              setShowUserMenu(false)
+                            }}
+                            className="w-full text-left px-3 py-2 text-xs text-gray-700 hover:bg-gray-50 transition-colors font-medium flex items-center gap-1.5"
+                          >
+                            <span className="text-yellow-500 text-[10px]">⚡</span> Connect Nostr (NIP-07)
+                          </button>
+                        )}
+                      </div>
+                    </>
                   )}
                 </div>
 
-                <div className="sidebar-section">
+                <div className="sidebar-section mt-1">
                   <div className="sidebar-section__header">
                     <span>Pages</span>
                   </div>
@@ -135,7 +156,14 @@ function WorkspaceView({ workspace }: { workspace: DemoWorkspace }) {
                 </div>
 
                 <div className="sidebar-footer">
-                  <button type="button" className="flush-button" onClick={() => void workspace.flushDrafts()}>
+                  <button
+                    type="button"
+                    className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs font-semibold text-gray-500 hover:text-gray-900 hover:bg-gray-200/50 transition-colors text-left"
+                    onClick={() => void workspace.flushDrafts()}
+                  >
+                    <svg className="w-3.5 h-3.5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.21 8H18" />
+                    </svg>
                     Flush drafts
                   </button>
                 </div>

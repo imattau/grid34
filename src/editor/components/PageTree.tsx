@@ -180,7 +180,7 @@ function PageNode({
 
       {/* Children rendering */}
       {children.length > 0 && !isCollapsed && (
-        <ul className="pl-4 ml-2 border-l border-gray-100 flex flex-col gap-0.5">
+        <ul className="pl-3.5 flex flex-col gap-0.5">
           {children.map((child) => (
             <PageNode
               key={child.id}
@@ -242,12 +242,12 @@ export function PageTree({ selectedPageId, onSelectPage }: PageTreeProps) {
       <button
         type="button"
         onClick={handleCreateRootPage}
-        className="mt-2 text-xs font-semibold text-gray-500 hover:text-gray-900 hover:bg-gray-100/50 flex items-center justify-center gap-1.5 py-1.5 px-3 rounded-lg border border-dashed border-gray-300 hover:border-gray-400 transition-colors"
+        className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs font-semibold text-gray-500 hover:text-gray-900 hover:bg-gray-200/50 transition-colors text-left"
       >
-        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <svg className="w-3.5 h-3.5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
         </svg>
-        New Page
+        Add a page
       </button>
     </nav>
   )
