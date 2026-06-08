@@ -67,8 +67,8 @@ export function SlashMenu({ query, rect, onSelect, onClose }: SlashMenuProps) {
         ref={menuRef}
         style={{
           position: 'fixed',
-          top: rect.bottom + window.scrollY + 8,
-          left: rect.left + window.scrollX,
+          top: rect.bottom + 8,
+          left: rect.left,
         }}
         className="z-50 min-w-[240px] bg-white border border-gray-200 rounded-lg shadow-xl p-3 text-sm text-gray-500"
       >
@@ -82,8 +82,8 @@ export function SlashMenu({ query, rect, onSelect, onClose }: SlashMenuProps) {
       ref={menuRef}
       style={{
         position: 'fixed',
-        top: rect.bottom + window.scrollY + 8,
-        left: rect.left + window.scrollX,
+        top: rect.bottom + 8,
+        left: rect.left,
       }}
       className="z-50 min-w-[280px] bg-white border border-gray-200 rounded-xl shadow-xl p-1.5 max-h-[300px] overflow-y-auto"
     >

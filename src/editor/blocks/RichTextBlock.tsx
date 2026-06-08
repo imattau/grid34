@@ -64,8 +64,13 @@ export function RichTextBlock({
       if (text.startsWith('/') && onOpenSlashMenu) {
         const query = text.slice(1)
         const { selection } = editor.state
-        const dom = editor.view.domAtPos(selection.from).node as HTMLElement
-        const rect = dom.getBoundingClientRect ? dom.getBoundingClientRect() : new DOMRect()
+        let rect: DOMRect
+        try {
+          const coords = editor.view.coordsAtPos(selection.from)
+          rect = new DOMRect(coords.left, coords.top, coords.right - coords.left, coords.bottom - coords.top)
+        } catch {
+          rect = editor.view.dom.getBoundingClientRect()
+        }
         onOpenSlashMenu(block.id, rect, query)
       } else if (onOpenSlashMenu) {
         // If they backspaced or typed other things, close the slash menu

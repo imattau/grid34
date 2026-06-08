@@ -258,6 +258,12 @@ export function PageEditor({ pageId }: PageEditorProps) {
                 text: '',
                 richText: null,
               })
+            } else {
+              const editors = e.currentTarget.querySelectorAll('.ProseMirror')
+              if (editors.length > 0) {
+                const lastEditor = editors[editors.length - 1] as HTMLElement
+                lastEditor.focus()
+              }
             }
           }
         }}
