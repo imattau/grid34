@@ -1,0 +1,15 @@
+import { describe, expect, it } from 'vitest'
+import { blockComponentRegistry } from './registry'
+import { ParagraphBlock } from './ParagraphBlock'
+import { HeadingBlock } from './HeadingBlock'
+import { ListBlock } from './ListBlock'
+import { DatabaseBlock } from './DatabaseBlock'
+
+describe('blockComponentRegistry', () => {
+  it('maps each v1 BlockType to its component', () => {
+    expect(blockComponentRegistry.paragraph).toBe(ParagraphBlock)
+    expect(blockComponentRegistry.heading).toBe(HeadingBlock)
+    expect(blockComponentRegistry.list).toBe(ListBlock)
+    expect(blockComponentRegistry.database).toBe(DatabaseBlock)
+  })
+})

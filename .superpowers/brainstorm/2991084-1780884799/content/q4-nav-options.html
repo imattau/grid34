@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Q4: Page tree / navigation layout options</title>
+<style>
+  body { font-family: -apple-system, sans-serif; background: #f4f4f5; padding: 24px; color: #18181b; }
+  h1 { font-size: 20px; }
+  .options { display: flex; gap: 24px; flex-wrap: wrap; }
+  .card { background: white; border: 1px solid #d4d4d8; border-radius: 8px; padding: 16px; width: 360px; }
+  .card h2 { font-size: 15px; margin-top: 0; }
+  .card p { font-size: 13px; color: #52525b; }
+  .mock { border: 1px solid #e4e4e7; border-radius: 6px; overflow: hidden; height: 220px; display: flex; }
+  .sidebar { background: #fafafa; border-right: 1px solid #e4e4e7; padding: 8px; font-size: 11px; }
+  .main { flex: 1; padding: 8px; font-size: 11px; background: white; }
+  .tree-item { padding: 3px 6px; border-radius: 4px; }
+  .tree-item.active { background: #e0e7ff; }
+  .indent1 { padding-left: 16px; }
+  .indent2 { padding-left: 28px; }
+  .topbar { height: 28px; background: #fafafa; border-bottom: 1px solid #e4e4e7; display: flex; align-items: center; padding: 0 8px; font-size: 11px; gap: 12px; }
+  .crumb { color: #71717a; }
+  .panel { background: #fafafa; border-left: 1px solid #e4e4e7; padding: 8px; font-size: 11px; width: 110px; }
+</style>
+</head>
+<body>
+<h1>Q4 — Page tree / navigation: which layout?</h1>
+
+<div class="options">
+
+  <div class="card">
+    <h2>A. Persistent left sidebar + main pane</h2>
+    <div class="mock">
+      <div class="sidebar" style="width:140px;">
+        <div class="tree-item active">📄 Project Plan</div>
+        <div class="tree-item indent1">📄 Roadmap</div>
+        <div class="tree-item indent1">📄 Notes</div>
+        <div class="tree-item indent2">📄 Meeting 1</div>
+        <div class="tree-item">📁 Database: Tasks</div>
+        <div class="tree-item">📄 Archive</div>
+      </div>
+      <div class="main">
+        <strong>Project Plan</strong><br><br>
+        Block editor content renders here. The tree is always visible;
+        clicking a node swaps the main pane.
+      </div>
+    </div>
+    <p>Classic Notion-style layout. Sidebar is collapsible but persistent;
+    expand/collapse carets per node; active page highlighted. Simple to build
+    with one `PageTree` component bound to `RepoStore`'s `PageTreeState`.</p>
+  </div>
+
+  <div class="card">
+    <h2>B. Top breadcrumb nav, no persistent tree</h2>
+    <div class="mock" style="flex-direction:column;">
+      <div class="topbar">
+        <span class="crumb">Project Plan</span> ›
+        <span class="crumb">Roadmap</span> ›
+        <strong>Q3 goals</strong>
+        <span style="margin-left:auto; color:#a1a1aa;">[tree ▾]</span>
+      </div>
+      <div class="main" style="flex:1;">
+        Page content fills the width. Navigation is via breadcrumbs +
+        an on-demand dropdown tree (click "[tree ▾]" to reveal a flyout).
+      </div>
+    </div>
+    <p>Maximizes editing real estate; tree is summoned on demand as an
+    overlay. Better for small screens / focus mode, but discoverability of
+    the page hierarchy is lower and requires an extra interaction to browse.</p>
+  </div>
+
+  <div class="card">
+    <h2>C. Sidebar + main + contextual right panel</h2>
+    <div class="mock">
+      <div class="sidebar" style="width:120px;">
+        <div class="tree-item active">📄 Project Plan</div>
+        <div class="tree-item indent1">📄 Roadmap</div>
+        <div class="tree-item">📁 Tasks DB</div>
+      </div>
+      <div class="main">
+        <strong>Project Plan</strong><br><br>
+        Editor content. Selecting a database row or block opens
+        details/properties on the right.
+      </div>
+      <div class="panel">
+        <strong>Properties</strong><br>
+        Status: Open<br>
+        Owner: —<br>
+        Linked pages: 2
+      </div>
+    </div>
+    <p>Same as A but adds a third, contextual right-hand panel (block/row
+    properties, backlinks, sync status). More powerful, more surface area to
+    build/maintain in v1 — could be deferred to a later iteration.</p>
+  </div>
+
+</div>
+</body>
+</html>
