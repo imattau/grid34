@@ -1,9 +1,13 @@
 import { useEffect, useState } from 'react'
-import { useRepoStore, useDraftStore } from '../contexts/storeContexts'
+import { DraftStoreContext, useRepoStore, useDraftStore } from '../contexts/storeContexts'
 import { blockComponentRegistry } from '../blocks/registry'
 import { LockedPageView } from './LockedPageView'
 import { BlockChrome } from './BlockChrome'
 import { SlashMenu, type SlashMenuItem } from './SlashMenu'
+import { restoreBlockEditorFocus } from './focusBlockEditor'
+import { loadNostrContacts, type NostrContact } from '../contacts/nostrContacts'
+import { loadPageCollaborators, loadWorkspaceOwnerPubkey, savePageCollaborators } from '../contacts/pageCollaborators'
+import { publishWorkspaceAccessSnapshot } from '../contacts/workspaceAccess'
 import type { Page, Block } from '../../storage/repo/types'
 import {
   DndContext,
@@ -22,6 +26,9 @@ import {
 
 export interface PageEditorProps {
   pageId: string
+  workspaceId?: string
+  currentUserPubkey?: string | null
+  relayUrls?: string[]
 }
 
 interface PageObservation {
@@ -29,13 +36,58 @@ interface PageObservation {
   page?: Page
 }
 
-export function PageEditor({ pageId }: PageEditorProps) {
+const DEFAULT_CONTACT_RELAYS = ['wss://nos.lol', 'wss://relay.damus.io', 'wss://relay.nostr.band']
+
+function readStoredNostrPubkey(): string | null {
+  if (typeof window === 'undefined') return null
+  const storedUser = sessionStorage.getItem('nostr_user')
+  if (!storedUser) return null
+  try {
+    const parsed = JSON.parse(storedUser) as { pubkey?: string }
+    return parsed.pubkey ?? null
+  } catch {
+    return null
+  }
+}
+
+export function PageEditor({ pageId, workspaceId: workspaceIdProp, currentUserPubkey, relayUrls: relayUrlsProp = [] }: PageEditorProps) {
   const repoStore = useRepoStore()
   const draftStore = useDraftStore()
   const [observation, setObservation] = useState<PageObservation>({ status: 'loading' })
   const [slashMenu, setSlashMenu] = useState<{ blockId: string; rect: DOMRect; query: string } | null>(null)
+  const [pendingFocusBlockId, setPendingFocusBlockId] = useState<string | null>(null)
+  const [showPageMenu, setShowPageMenu] = useState(false)
+  const [showInviteMenu, setShowInviteMenu] = useState(false)
   const [showEmojiPicker, setShowEmojiPicker] = useState(false)
   const [title, setTitle] = useState('')
+  const [contacts, setContacts] = useState<NostrContact[]>([])
+  const [contactsStatus, setContactsStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
+  const [contactQuery, setContactQuery] = useState('')
+  const [invitedPubkeys, setInvitedPubkeys] = useState<string[]>([])
+
+  const workspaceId =
+    workspaceIdProp ??
+    ((typeof window !== 'undefined' && sessionStorage.getItem('grid34_active_repo_id')) || 'workspace-repo')
+  const resolvedUserPubkey = currentUserPubkey ?? readStoredNostrPubkey()
+  const workspaceOwnerPubkey = loadWorkspaceOwnerPubkey(workspaceId)
+  const canEdit =
+    resolvedUserPubkey !== null &&
+    (workspaceOwnerPubkey === null ||
+      resolvedUserPubkey === workspaceOwnerPubkey ||
+      invitedPubkeys.includes(resolvedUserPubkey))
+
+  const readOnlyDraftStore = {
+    ...draftStore,
+    stage: () => {},
+    flush: async () => {},
+    restorePage: () => {},
+    createPage: () => '',
+    renamePage: () => {},
+    deletePage: () => {},
+    changePageIcon: () => {},
+    movePage: () => {},
+  }
+  const editorDraftStore = canEdit ? draftStore : readOnlyDraftStore
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -60,6 +112,56 @@ export function PageEditor({ pageId }: PageEditorProps) {
     }
   }, [observation.page?.id, observation.page?.title])
 
+  useEffect(() => {
+    setInvitedPubkeys(loadPageCollaborators(workspaceId, pageId))
+  }, [pageId, workspaceId])
+
+  useEffect(() => {
+    if (!pendingFocusBlockId) return
+    const pageBlocks = observation.page?.blocks ?? []
+    if (!pageBlocks.some((block) => block.id === pendingFocusBlockId)) return
+
+    restoreBlockEditorFocus(pendingFocusBlockId)
+    if (slashMenu) {
+      setSlashMenu(null)
+    }
+    setPendingFocusBlockId(null)
+  }, [observation.page?.blocks, pendingFocusBlockId, slashMenu])
+
+  useEffect(() => {
+    if (!showInviteMenu) return
+    if (contactsStatus !== 'idle') return
+    if (!resolvedUserPubkey) return
+
+    const pubkey = resolvedUserPubkey
+
+    let relayUrls = relayUrlsProp
+    if (relayUrls.length === 0 && typeof window !== 'undefined') {
+      const storedRelays = localStorage.getItem('nostr_relays')
+      if (storedRelays) {
+        try {
+          relayUrls = JSON.parse(storedRelays) as string[]
+        } catch {
+          relayUrls = []
+        }
+      }
+    }
+    if (relayUrls.length === 0) {
+      relayUrls = DEFAULT_CONTACT_RELAYS
+    }
+
+    setContactsStatus('loading')
+    void loadNostrContacts(pubkey ?? '', relayUrls)
+      .then((nextContacts) => {
+        setContacts(nextContacts)
+        setContactsStatus('ready')
+      })
+      .catch(() => {
+        setContacts([])
+        setContactsStatus('error')
+      })
+  }, [contactsStatus, relayUrlsProp, resolvedUserPubkey, showInviteMenu])
+
   if (observation.status === 'loading') {
     return <p role="status">Decrypting…</p>
   }
@@ -69,6 +171,7 @@ export function PageEditor({ pageId }: PageEditorProps) {
   }
 
   const page = observation.page
+  const revisions = repoStore.listPageRevisions(pageId).slice(0, 10)
 
   const sortedBlocks = page.blocks
     .slice()
@@ -94,10 +197,34 @@ export function PageEditor({ pageId }: PageEditorProps) {
     }
 
     const activeBlock = sortedBlocks[oldIndex]
-    draftStore.stage(pageId, activeBlock.id, {
+    editorDraftStore.stage(pageId, activeBlock.id, {
       ...activeBlock.content,
       order: newOrder,
     })
+  }
+
+  function getNextBlockOrder(): number {
+    if (sortedBlocks.length === 0) return 1.0
+    return sortedBlocks[sortedBlocks.length - 1].order + 1.0
+  }
+
+  function createParagraphBlockAtEnd(shouldOpenCommandMenu: boolean, anchorRect?: DOMRect) {
+    const newBlockId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2, 15)
+    editorDraftStore.stage(pageId, newBlockId, {
+      type: 'paragraph',
+      order: getNextBlockOrder(),
+      text: '',
+      richText: null,
+      parentBlockId: null,
+    })
+
+    if (shouldOpenCommandMenu) {
+      setSlashMenu({
+        blockId: newBlockId,
+        rect: anchorRect ?? new DOMRect(),
+        query: '',
+      })
+    }
   }
 
   function handleSplitBlock(blockId: string, before: string, after: string) {
@@ -106,7 +233,7 @@ export function PageEditor({ pageId }: PageEditorProps) {
 
     const currentBlock = sortedBlocks[index]
 
-    draftStore.stage(pageId, blockId, {
+    editorDraftStore.stage(pageId, blockId, {
       ...currentBlock.content,
       text: before,
       richText: null,
@@ -120,13 +247,15 @@ export function PageEditor({ pageId }: PageEditorProps) {
     }
 
     const newBlockId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2, 15)
-    draftStore.stage(pageId, newBlockId, {
+    editorDraftStore.stage(pageId, newBlockId, {
       type: currentBlock.type,
       order: newOrder,
       text: after,
       richText: null,
       parentBlockId: currentBlock.parentBlockId,
     })
+    restoreBlockEditorFocus(newBlockId)
+    setPendingFocusBlockId(newBlockId)
   }
 
   function handleMergeWithPrevious(blockId: string) {
@@ -139,19 +268,19 @@ export function PageEditor({ pageId }: PageEditorProps) {
     const prevText = (prevBlock.content.text as string) || ''
     const currentText = (currentBlock.content.text as string) || ''
 
-    draftStore.stage(pageId, prevBlock.id, {
+    editorDraftStore.stage(pageId, prevBlock.id, {
       ...prevBlock.content,
       text: prevText + currentText,
       richText: null,
     })
 
-    draftStore.stage(pageId, blockId, {
+    editorDraftStore.stage(pageId, blockId, {
       deleted: true,
     })
   }
 
   function handleDeleteBlock(blockId: string) {
-    draftStore.stage(pageId, blockId, {
+    editorDraftStore.stage(pageId, blockId, {
       deleted: true,
     })
   }
@@ -168,10 +297,10 @@ export function PageEditor({ pageId }: PageEditorProps) {
     if (!slashMenu) return
     const blockId = slashMenu.blockId
     const currentBlock = sortedBlocks.find((b) => b.id === blockId)
-    if (!currentBlock) return
+    const currentContent = currentBlock?.content ?? {}
 
-    draftStore.stage(pageId, blockId, {
-      ...currentBlock.content,
+    editorDraftStore.stage(pageId, blockId, {
+      ...currentContent,
       type: item.type,
       ...item.content,
       text: '',
@@ -179,6 +308,8 @@ export function PageEditor({ pageId }: PageEditorProps) {
     })
 
     setSlashMenu(null)
+    restoreBlockEditorFocus(blockId)
+    setPendingFocusBlockId(blockId)
   }
 
   const emojis = ['📄', '📝', '💡', '📅', '🛠️', '🚀', '📚', '💻', '🎨', '🏠', '🔥', '⭐', '🎉', '👤', '💬']
@@ -186,15 +317,65 @@ export function PageEditor({ pageId }: PageEditorProps) {
   function handleSaveTitle() {
     const cleaned = title.trim()
     if (cleaned && cleaned !== page.title) {
-      draftStore.renamePage(pageId, cleaned)
+      editorDraftStore.renamePage(pageId, cleaned)
     } else {
       setTitle(page.title)
     }
   }
 
+  function handleRestoreRevision(revisionPage: Page) {
+    editorDraftStore.restorePage(revisionPage)
+    setShowPageMenu(false)
+  }
+
+  function handleToggleInviteMenu() {
+    setShowInviteMenu((current) => {
+      const next = !current
+      if (next) {
+        setShowPageMenu(false)
+        setContactsStatus('idle')
+      }
+      return next
+    })
+  }
+
+  function handleToggleCollaborator(pubkey: string) {
+    const isRemoving = invitedPubkeys.includes(pubkey)
+    const next = isRemoving ? invitedPubkeys.filter((value) => value !== pubkey) : [...invitedPubkeys, pubkey]
+
+    setInvitedPubkeys(next)
+    savePageCollaborators(workspaceId, pageId, next)
+
+    if (resolvedUserPubkey) {
+      const updatedAt = Date.now()
+      void publishWorkspaceAccessSnapshot(relayUrlsProp, {
+        workspaceId,
+        collaboratorPubkeys: Array.from(new Set([resolvedUserPubkey, ...next])),
+        ownerPubkey: workspaceOwnerPubkey ?? resolvedUserPubkey,
+        updatedAt,
+      })
+
+      if (isRemoving) {
+        void publishWorkspaceAccessSnapshot(relayUrlsProp, {
+          workspaceId,
+          collaboratorPubkeys: [pubkey],
+          ownerPubkey: workspaceOwnerPubkey ?? resolvedUserPubkey,
+          updatedAt: updatedAt + 1,
+          revoked: true,
+        })
+      }
+    }
+  }
+
+  const visibleContacts = contacts.filter((contact) => {
+    const haystack = `${contact.petname ?? ''} ${contact.pubkey} ${contact.relay ?? ''}`.toLowerCase()
+    return haystack.includes(contactQuery.trim().toLowerCase())
+  })
+
   return (
-    <article className="page-editor w-full animate-fade-in" aria-label={page.title}>
-      <header className="page-editor__header mb-8 relative">
+    <DraftStoreContext.Provider value={editorDraftStore}>
+      <article className="page-editor w-full animate-fade-in" aria-label={page.title}>
+        <header className="page-editor__header mb-8 relative pr-10">
         <div className="page-editor__breadcrumbs text-xs text-gray-400 font-semibold uppercase tracking-wider mb-2">Page</div>
         <div className="flex items-center gap-3">
           <div className="relative">
@@ -218,7 +399,7 @@ export function PageEditor({ pageId }: PageEditorProps) {
                       key={emoji}
                       type="button"
                       onClick={() => {
-                        draftStore.changePageIcon(pageId, emoji)
+                        editorDraftStore.changePageIcon(pageId, emoji)
                         setShowEmojiPicker(false)
                       }}
                       className="text-xl hover:bg-gray-150 hover:scale-110 active:scale-95 p-1.5 rounded-lg transition-all duration-150 text-center select-none"
@@ -232,7 +413,10 @@ export function PageEditor({ pageId }: PageEditorProps) {
           </div>
           <input
             type="text"
-            className="page-editor__title text-4xl font-bold tracking-tight text-gray-950 bg-transparent border-none outline-none focus:ring-0 p-0 m-0 w-full hover:bg-gray-50/50 rounded-lg px-2 -mx-2 transition-colors duration-150"
+            readOnly={!canEdit}
+            className={`page-editor__title text-4xl font-bold tracking-tight text-gray-950 bg-transparent border-none outline-none focus:ring-0 p-0 m-0 w-full rounded-lg px-2 -mx-2 transition-colors duration-150 ${
+              canEdit ? 'hover:bg-gray-50/50' : 'cursor-default opacity-90'
+            }`}
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             onBlur={handleSaveTitle}
@@ -244,69 +428,284 @@ export function PageEditor({ pageId }: PageEditorProps) {
             placeholder="Untitled"
           />
         </div>
-      </header>
-
-      <div
-        className="page-editor__content flex flex-col min-w-0"
-        onClick={(e) => {
-          if (e.target === e.currentTarget || (e.target as HTMLElement).classList.contains('empty-state-placeholder')) {
-            if (sortedBlocks.length === 0) {
-              const newBlockId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2, 15)
-              draftStore.stage(pageId, newBlockId, {
-                type: 'paragraph',
-                order: 1.0,
-                text: '',
-                richText: null,
-              })
-            } else {
-              const editors = e.currentTarget.querySelectorAll('.ProseMirror')
-              if (editors.length > 0) {
-                const lastEditor = editors[editors.length - 1] as HTMLElement
-                lastEditor.focus()
-              }
-            }
-          }
-        }}
-      >
-        {sortedBlocks.length === 0 && (
-          <div className="empty-state-placeholder text-gray-400 text-sm py-4 px-2 cursor-text hover:bg-gray-50/50 rounded-lg transition-colors select-none">
-            Press here to start writing, or type '/' for commands...
+        {canEdit ? (
+          <div className="absolute top-0 right-0 flex items-start gap-1">
+            <div className="relative">
+              <button
+                type="button"
+                className="p-2 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors"
+                aria-label="Invite collaborators"
+                aria-expanded={showInviteMenu}
+                onClick={handleToggleInviteMenu}
+              >
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-3-3h-2m-4 5H2v-2a4 4 0 014-4h6m-2-6a4 4 0 110-8 4 4 0 010 8zm8 1a3 3 0 100-6 3 3 0 000 6z" />
+                </svg>
+              </button>
+              {showInviteMenu && (
+                <>
+                  <div className="fixed inset-0 z-40" onClick={() => setShowInviteMenu(false)} />
+                  <div className="absolute right-0 top-11 z-50 w-96 max-w-[calc(100vw-1rem)] overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl">
+                    <div className="flex items-center justify-between border-b border-gray-100 px-3 py-2">
+                      <div>
+                        <div className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Invite editors</div>
+                        <div className="text-xs text-gray-500">{invitedPubkeys.length} invited</div>
+                      </div>
+                      <button
+                        type="button"
+                        className="text-xs text-gray-400 hover:text-gray-700"
+                        onClick={() => setShowInviteMenu(false)}
+                      >
+                        Close
+                      </button>
+                    </div>
+                    <div className="max-h-96 overflow-y-auto p-2">
+                      {!resolvedUserPubkey ? (
+                        <div className="rounded-lg border border-dashed border-gray-200 px-3 py-4 text-sm text-gray-500">
+                          Connect Nostr to load your contact list.
+                        </div>
+                      ) : contactsStatus === 'loading' ? (
+                        <div className="px-2 py-4 text-sm text-gray-500">Loading contacts…</div>
+                      ) : contactsStatus === 'error' ? (
+                        <div className="rounded-lg border border-dashed border-gray-200 px-3 py-4 text-sm text-gray-500">
+                          Could not load your contact list from relays.
+                        </div>
+                      ) : (
+                        <div className="flex flex-col gap-2">
+                          <input
+                            type="text"
+                            className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-gray-300"
+                            value={contactQuery}
+                            onChange={(e) => setContactQuery(e.target.value)}
+                            placeholder="Search contacts"
+                          />
+                          {invitedPubkeys.length > 0 && (
+                            <div className="flex flex-wrap gap-1">
+                              {invitedPubkeys.map((pubkey) => (
+                                <button
+                                  key={pubkey}
+                                  type="button"
+                                  onClick={() => handleToggleCollaborator(pubkey)}
+                                  className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-2 py-1 text-[11px] font-medium text-blue-700 hover:bg-blue-100"
+                                  title="Remove invite"
+                                >
+                                  <span>{pubkey.slice(0, 8)}…{pubkey.slice(-4)}</span>
+                                  <span aria-hidden="true">×</span>
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                          {visibleContacts.length === 0 ? (
+                            <div className="px-2 py-4 text-sm text-gray-500">
+                              No contacts match your search.
+                            </div>
+                          ) : (
+                            <div className="flex flex-col gap-1">
+                              {visibleContacts.map((contact) => {
+                                const isInvited = invitedPubkeys.includes(contact.pubkey)
+                                const label = contact.displayName?.trim() || contact.name?.trim() || contact.petname?.trim() || `${contact.pubkey.slice(0, 8)}…${contact.pubkey.slice(-4)}`
+                                const picture = contact.picture || `https://robohash.org/${contact.pubkey}.png?set=set4`
+                                return (
+                                  <button
+                                    key={contact.pubkey}
+                                    type="button"
+                                    onClick={() => handleToggleCollaborator(contact.pubkey)}
+                                    className={`rounded-lg border px-3 py-2 text-left transition-colors ${
+                                      isInvited ? 'border-blue-200 bg-blue-50/70 hover:bg-blue-100' : 'border-gray-200 hover:bg-gray-50'
+                                    }`}
+                                  >
+                                    <div className="flex items-center justify-between gap-3">
+                                      <div className="flex min-w-0 items-center gap-2">
+                                        <img
+                                          src={picture}
+                                          alt=""
+                                          className="h-8 w-8 flex-shrink-0 rounded-full border border-gray-200 object-cover"
+                                          onError={(e) => {
+                                            e.currentTarget.src = `https://robohash.org/${contact.pubkey}.png?set=set4`
+                                          }}
+                                        />
+                                        <div className="min-w-0">
+                                          <div className="truncate text-sm font-semibold text-gray-800">{label}</div>
+                                          <div className="truncate text-[11px] text-gray-500">{contact.pubkey}</div>
+                                        </div>
+                                      </div>
+                                      <span className={`flex-shrink-0 text-[10px] font-semibold uppercase tracking-wider ${isInvited ? 'text-blue-600' : 'text-gray-400'}`}>
+                                        {isInvited ? 'Invited' : 'Invite'}
+                                      </span>
+                                    </div>
+                                  </button>
+                                )
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+            <div className="relative">
+              <button
+                type="button"
+                className="p-2 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors"
+                aria-label="Page menu"
+                aria-expanded={showPageMenu}
+                onClick={() => {
+                  setShowInviteMenu(false)
+                  setShowPageMenu((current) => !current)
+                }}
+              >
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+                </svg>
+              </button>
+              {showPageMenu && (
+                <>
+                  <div className="fixed inset-0 z-40" onClick={() => setShowPageMenu(false)} />
+                  <div className="absolute right-0 top-11 z-50 w-80 max-w-[calc(100vw-1rem)] overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl">
+                    <div className="flex items-center justify-between border-b border-gray-100 px-3 py-2">
+                      <div>
+                        <div className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Revision History</div>
+                        <div className="text-xs text-gray-500">{revisions.length} snapshots</div>
+                      </div>
+                      <button
+                        type="button"
+                        className="text-xs text-gray-400 hover:text-gray-700"
+                        onClick={() => setShowPageMenu(false)}
+                      >
+                        Close
+                      </button>
+                    </div>
+                    <div className="max-h-80 overflow-y-auto p-2">
+                      {revisions.length === 0 ? (
+                        <div className="px-2 py-4 text-sm text-gray-500">No revisions yet.</div>
+                      ) : (
+                        <div className="flex flex-col gap-1">
+                          {revisions.map((revision, index) => (
+                            <button
+                              key={revision.id}
+                              type="button"
+                              className="rounded-lg border border-gray-200 px-3 py-2 text-left transition-colors hover:bg-gray-50"
+                              onClick={() => handleRestoreRevision(revision.page)}
+                            >
+                              <div className="flex items-center justify-between gap-3">
+                                <div className="min-w-0">
+                                  <div className="truncate text-xs font-semibold text-gray-800">
+                                    Revision {revisions.length - index}
+                                  </div>
+                                  <div className="truncate text-[11px] text-gray-500">
+                                    {new Date(revision.createdAt).toLocaleString()}
+                                  </div>
+                                </div>
+                                <span className="flex-shrink-0 text-[10px] font-semibold uppercase tracking-wider text-blue-600">
+                                  Restore
+                                </span>
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        ) : (
+          <div className="absolute top-0 right-0 rounded-full border border-gray-200 bg-white px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-gray-500 shadow-sm">
+            Read only
           </div>
         )}
-        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-          <SortableContext items={sortedBlocks.map((b) => b.id)} strategy={verticalListSortingStrategy}>
-            {sortedBlocks.map((block) => {
-              const Component = blockComponentRegistry[block.type as keyof typeof blockComponentRegistry]
-              if (!Component) return null
-              return (
-                <BlockChrome
-                  key={block.id}
-                  block={block}
-                  pageId={pageId}
-                  onDelete={() => handleDeleteBlock(block.id)}
-                >
-                  <Component
+      </header>
+
+      {!canEdit && (
+        <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+          You can view this page, but you cannot edit it until your Nostr pubkey is added to the page collaborators.
+        </div>
+      )}
+
+        <div
+          className="page-editor__content flex flex-col min-w-0"
+          onClick={(e) => {
+            if (e.target === e.currentTarget || (e.target as HTMLElement).classList.contains('empty-state-placeholder')) {
+              if (sortedBlocks.length === 0) {
+                const newBlockId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2, 15)
+                editorDraftStore.stage(pageId, newBlockId, {
+                  type: 'paragraph',
+                  order: 1.0,
+                  text: '',
+                  richText: null,
+                })
+              } else {
+                const editors = e.currentTarget.querySelectorAll('.ProseMirror')
+                if (editors.length > 0) {
+                  const lastEditor = editors[editors.length - 1] as HTMLElement
+                  lastEditor.focus()
+                }
+              }
+            }
+          }}
+        >
+          {sortedBlocks.length === 0 && (
+            <div className="empty-state-placeholder text-gray-400 text-sm py-4 px-2 cursor-text hover:bg-gray-50/50 rounded-lg transition-colors select-none">
+              Press here to start writing, or type '/' for commands...
+            </div>
+          )}
+          <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+            <SortableContext items={sortedBlocks.map((b) => b.id)} strategy={verticalListSortingStrategy}>
+              {sortedBlocks.map((block) => {
+                const Component = blockComponentRegistry[block.type as keyof typeof blockComponentRegistry]
+                if (!Component) return null
+                return (
+                  <BlockChrome
+                    key={block.id}
                     block={block}
                     pageId={pageId}
-                    onSplitBlock={handleSplitBlock}
-                    onMergeWithPrevious={handleMergeWithPrevious}
-                    onOpenSlashMenu={handleOpenSlashMenu}
-                  />
-                </BlockChrome>
-              )
-            })}
-          </SortableContext>
-        </DndContext>
-      </div>
+                    onDelete={() => handleDeleteBlock(block.id)}
+                  >
+                    <Component
+                      block={block}
+                      pageId={pageId}
+                      onSplitBlock={handleSplitBlock}
+                      onMergeWithPrevious={handleMergeWithPrevious}
+                      onOpenSlashMenu={handleOpenSlashMenu}
+                    />
+                  </BlockChrome>
+                )
+              })}
+            </SortableContext>
+          </DndContext>
+          <div className="mt-2 flex justify-start">
+            <button
+              type="button"
+              disabled={!canEdit}
+              aria-label="Add block"
+              className={`page-editor__add-block inline-flex items-center gap-2 rounded-lg px-2 py-1 text-sm font-medium transition-colors ${
+                canEdit ? '' : 'cursor-not-allowed'
+              }`}
+              onClick={(event) => {
+                event.preventDefault()
+                event.stopPropagation()
+                const rect = event.currentTarget.getBoundingClientRect()
+                createParagraphBlockAtEnd(true, rect)
+              }}
+            >
+              <span className="text-base leading-none text-current">+</span>
+              <span>Add block</span>
+            </button>
+          </div>
+        </div>
 
-      {slashMenu && (
-        <SlashMenu
-          query={slashMenu.query}
-          rect={slashMenu.rect}
-          onSelect={handleSelectSlashMenuItem}
-          onClose={() => setSlashMenu(null)}
-        />
-      )}
-    </article>
+        {slashMenu && (
+          <SlashMenu
+            query={slashMenu.query}
+            rect={slashMenu.rect}
+            onSelect={handleSelectSlashMenuItem}
+            onClose={() => setSlashMenu(null)}
+          />
+        )}
+      </article>
+    </DraftStoreContext.Provider>
   )
 }

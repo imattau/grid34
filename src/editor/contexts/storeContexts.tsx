@@ -4,9 +4,17 @@ import type { DraftStore } from '../stores/draftStore'
 import type { DbViewStore } from '../stores/dbViewStore'
 import type { Page, PageTreeState } from '../../storage/repo/types'
 
+export interface PageRevision {
+  id: string
+  pageId: string
+  page: Page
+  createdAt: number
+}
+
 export interface EditorRepoStore {
   pageTree$: Observable<PageTreeState>
   observePage(pageId: string): Observable<{ status: 'loading' | 'ready' | 'locked'; page?: Page }>
+  listPageRevisions(pageId: string): PageRevision[]
 }
 
 export const RepoStoreContext = createContext<EditorRepoStore | null>(null)

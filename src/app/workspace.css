@@ -310,7 +310,7 @@ body {
   flex-direction: column;
   height: 100vh;
   overflow-y: auto;
-  background: #ffffff;
+  background: #efece6;
 }
 
 .workspace-toolbar {
@@ -342,22 +342,25 @@ body {
 .page-shell {
   flex: 1;
   display: flex;
+  align-items: stretch;
   justify-content: center;
-  padding: 48px 96px 96px 96px;
+  padding: 48px 96px 0 96px;
   box-sizing: border-box;
   overflow-y: auto;
+  background: #f4f2ed;
 }
 
 .page-editor,
 .locked-page {
   width: 100%;
   max-width: 720px;
-  min-height: auto;
+  min-height: 100%;
   border: none;
   border-radius: 0;
   box-shadow: none;
-  background: transparent;
-  padding: 0;
+  background: #ffffff;
+  padding: 48px 56px 56px;
+  box-sizing: border-box;
 }
 
 .page-editor__header {
@@ -391,6 +394,23 @@ body {
   gap: 4px;
   min-height: 200px;
   cursor: text;
+}
+
+.page-editor__add-block {
+  color: #b4aea3;
+}
+
+.page-editor__add-block:hover {
+  color: #8f8778;
+}
+
+.page-editor__add-block:disabled {
+  color: #d4cec2;
+}
+
+.page-editor__add-block:focus-visible {
+  outline: 2px solid rgba(35, 131, 226, 0.35);
+  outline-offset: 2px;
 }
 
 .page-block {

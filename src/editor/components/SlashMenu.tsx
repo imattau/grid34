@@ -1,4 +1,5 @@
 import { useEffect, useState, useRef } from 'react'
+import { getSlashMenuPlacement } from './slashMenuPlacement'
 
 export interface SlashMenuItem {
   label: string
@@ -27,6 +28,9 @@ interface SlashMenuProps {
 export function SlashMenu({ query, rect, onSelect, onClose }: SlashMenuProps) {
   const [selectedIndex, setSelectedIndex] = useState(0)
   const menuRef = useRef<HTMLDivElement>(null)
+  const [placement, setPlacement] = useState(() =>
+    getSlashMenuPlacement(rect, window.innerWidth, window.innerHeight, 300, 280)
+  )
 
   const filteredItems = SLASH_MENU_ITEMS.filter((item) =>
     item.label.toLowerCase().includes(query.toLowerCase()) ||
@@ -36,6 +40,10 @@ export function SlashMenu({ query, rect, onSelect, onClose }: SlashMenuProps) {
   useEffect(() => {
     setSelectedIndex(0)
   }, [query])
+
+  useEffect(() => {
+    setPlacement(getSlashMenuPlacement(rect, window.innerWidth, window.innerHeight, 300, 280))
+  }, [rect])
 
   // Handle global keyboard events for menu navigation while editor is focused
   useEffect(() => {
@@ -67,8 +75,9 @@ export function SlashMenu({ query, rect, onSelect, onClose }: SlashMenuProps) {
         ref={menuRef}
         style={{
           position: 'fixed',
-          top: rect.bottom + 8,
-          left: rect.left,
+          top: placement.top,
+          left: placement.left,
+          maxHeight: placement.maxHeight,
         }}
         className="z-50 min-w-[240px] bg-white border border-gray-200 rounded-lg shadow-xl p-3 text-sm text-gray-500"
       >
@@ -80,10 +89,14 @@ export function SlashMenu({ query, rect, onSelect, onClose }: SlashMenuProps) {
   return (
     <div
       ref={menuRef}
+      onMouseDown={(e) => {
+        e.preventDefault()
+      }}
       style={{
         position: 'fixed',
-        top: rect.bottom + 8,
-        left: rect.left,
+        top: placement.top,
+        left: placement.left,
+        maxHeight: placement.maxHeight,
       }}
       className="z-50 min-w-[280px] bg-white border border-gray-200 rounded-xl shadow-xl p-1.5 max-h-[300px] overflow-y-auto"
     >
@@ -95,6 +108,10 @@ export function SlashMenu({ query, rect, onSelect, onClose }: SlashMenuProps) {
         return (
           <button
             key={item.label}
+            type="button"
+            onMouseDown={(e) => {
+              e.preventDefault()
+            }}
             onClick={() => onSelect(item)}
             className={`w-full text-left flex items-center gap-3 px-2.5 py-2 rounded-lg transition-colors ${
               isSelected ? 'bg-gray-100 text-gray-900' : 'text-gray-700 hover:bg-gray-50'

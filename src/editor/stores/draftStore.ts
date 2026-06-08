@@ -19,12 +19,17 @@ export interface Publisher {
   ): Promise<NostrEvent>
 }
 
+export interface CheckpointListener {
+  (page: Page, revisionId: string): void
+}
+
 export type DraftMap = Record<string, { pageId: string; content: Record<string, unknown> }>
 
 export interface DraftStore {
   stage(pageId: string, blockId: string, content: Record<string, unknown>): void
   drafts$: Observable<DraftMap>
   flush(): Promise<void>
+  restorePage(page: Page): void
   createPage(parentId: string | null, title: string): string
   renamePage(pageId: string, title: string): void
   deletePage(pageId: string): void
@@ -41,6 +46,7 @@ export interface CreateDraftStoreOptions {
   relayUrls: string[]
   repoId?: string
   cek?: Uint8Array
+  onCheckpoint?: CheckpointListener
   debounceMs?: number
   retryBaseMs?: number
 }
@@ -55,6 +61,7 @@ export function createDraftStore(options: CreateDraftStoreOptions): DraftStore {
     relayUrls,
     repoId = 'workspace-repo',
     cek = new Uint8Array(32),
+    onCheckpoint,
     debounceMs = 1000,
     retryBaseMs = 1000,
   } = options
@@ -81,7 +88,7 @@ export function createDraftStore(options: CreateDraftStoreOptions): DraftStore {
     )
   }
 
-  async function checkpointPage(pageId: string): Promise<void> {
+  async function checkpointPage(pageId: string, shouldCheckpoint = false): Promise<void> {
     const drafts = draftsSubject.getValue()
     const draftEntriesForPage = Object.entries(drafts).filter(([, d]) => d.pageId === pageId)
     if (draftEntriesForPage.length === 0) return
@@ -142,7 +149,10 @@ export function createDraftStore(options: CreateDraftStoreOptions): DraftStore {
     })
 
     try {
-      await publisher.publishPatch(template, signer, relayPublisher, relayUrls)
+      const signed = await publisher.publishPatch(template, signer, relayPublisher, relayUrls)
+      if (shouldCheckpoint) {
+        onCheckpoint?.(updatedPage, signed.id)
+      }
     } catch {
       const attempt = retryAttempts.get(pageId) ?? 0
       retryAttempts.set(pageId, attempt + 1)
@@ -175,7 +185,7 @@ export function createDraftStore(options: CreateDraftStoreOptions): DraftStore {
         clearTimeout(timer)
         timers.delete(pageId)
       }
-      await checkpointPage(pageId)
+      await checkpointPage(pageId, true)
     }
   }
 
@@ -187,10 +197,18 @@ export function createDraftStore(options: CreateDraftStoreOptions): DraftStore {
       createdAt: Math.floor(Date.now() / 1000),
     })
     try {
-      await publisher.publishPatch(template, signer, relayPublisher, relayUrls)
+      const signed = await publisher.publishPatch(template, signer, relayPublisher, relayUrls)
+      onCheckpoint?.(page, signed.id)
     } catch (err) {
       console.error('Failed to publish page patch', err)
     }
+  }
+
+  function restorePage(page: Page): void {
+    void publishPagePatch({
+      ...page,
+      updatedAt: Date.now(),
+    })
   }
 
   function createPage(parentId: string | null, title: string): string {
@@ -243,6 +261,7 @@ export function createDraftStore(options: CreateDraftStoreOptions): DraftStore {
     stage,
     drafts$: draftsSubject.asObservable(),
     flush,
+    restorePage,
     createPage,
     renamePage,
     deletePage,

@@ -4,6 +4,14 @@ import { PageEditor } from './editor/components/PageEditor'
 import { PageTree } from './editor/components/PageTree'
 import { createWorkspace, type Workspace } from './app/workspace'
 import { SimplePool } from 'nostr-tools/pool'
+import {
+  loadAccessibleWorkspaces,
+  loadPageCollaborators,
+  loadWorkspaceOwnerPubkey,
+  saveAccessibleWorkspace,
+  saveWorkspaceOwnerPubkey,
+} from './editor/contacts/pageCollaborators'
+import { loadWorkspaceAccessWorkspaces, publishWorkspaceAccessSnapshot } from './editor/contacts/workspaceAccess'
 import './app/workspace.css'
 
 function LoadingShell() {
@@ -18,6 +26,35 @@ function LoadingShell() {
   )
 }
 
+function GuestShell({
+  title,
+  message,
+  actionLabel,
+  onAction,
+}: {
+  title: string
+  message: string
+  actionLabel: string
+  onAction: () => void
+}) {
+  return (
+    <main className="workspace-shell workspace-shell--loading">
+      <section className="loading-card" aria-live="polite">
+        <p className="eyebrow">grid34</p>
+        <h1>{title}</h1>
+        <p>{message}</p>
+        <button
+          type="button"
+          onClick={onAction}
+          className="mt-4 inline-flex items-center justify-center rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800"
+        >
+          {actionLabel}
+        </button>
+      </section>
+    </main>
+  )
+}
+
 interface NostrProfile {
   pubkey: string
   name: string
@@ -26,25 +63,121 @@ interface NostrProfile {
 
 function WorkspaceView({ workspace }: { workspace: Workspace }) {
   const [selectedPageId, setSelectedPageId] = useState<string | null>(workspace.selectedPageId)
-  const [user, setUser] = useState<NostrProfile | null>(null)
+  const [user, setUser] = useState<NostrProfile | null>(() => {
+    if (typeof window === 'undefined') return null
+    const stored = sessionStorage.getItem('nostr_user')
+    if (!stored) return null
+    try {
+      return JSON.parse(stored) as NostrProfile
+    } catch {
+      return null
+    }
+  })
+  const [relayUrls, setRelayUrls] = useState<string[]>(() => {
+    if (typeof window === 'undefined') return []
+    const stored = sessionStorage.getItem('nostr_relays')
+    if (!stored) return []
+    try {
+      const parsed = JSON.parse(stored) as string[]
+      return Array.isArray(parsed) ? parsed : []
+    } catch {
+      return []
+    }
+  })
   const [showUserMenu, setShowUserMenu] = useState(false)
   const [showWorkspaces, setShowWorkspaces] = useState(() => {
     if (typeof window === 'undefined') return true
-    return localStorage.getItem('grid34_workspaces_collapsed') !== 'true'
+    return sessionStorage.getItem('grid34_workspaces_collapsed') !== 'true'
   })
+  const [accessibleWorkspaceIds, setAccessibleWorkspaceIds] = useState<string[]>([])
 
   useEffect(() => {
     setSelectedPageId(workspace.selectedPageId)
   }, [workspace])
 
   useEffect(() => {
-    const stored = localStorage.getItem('nostr_user')
-    if (stored) {
-      try {
-        setUser(JSON.parse(stored))
-      } catch {}
+    if (!user?.pubkey) return
+    const ownerKey = loadWorkspaceOwnerPubkey(workspace.repoId)
+    if (!ownerKey) {
+      saveWorkspaceOwnerPubkey(workspace.repoId, user.pubkey)
     }
-  }, [])
+  }, [user?.pubkey, workspace.repoId])
+
+  useEffect(() => {
+    if (!user?.pubkey) {
+      setAccessibleWorkspaceIds([])
+      return
+    }
+
+    const cached = loadAccessibleWorkspaces(user.pubkey)
+    const seeded = Array.from(new Set([...cached, workspace.repoId]))
+    setAccessibleWorkspaceIds(seeded)
+    saveAccessibleWorkspace(user.pubkey, workspace.repoId)
+
+    let cancelled = false
+    void loadWorkspaceAccessWorkspaces(user.pubkey, relayUrls)
+      .then((snapshots) => {
+        if (cancelled) return
+        const next = Array.from(new Set([...seeded, ...snapshots.map((snapshot) => snapshot.workspaceId)]))
+        setAccessibleWorkspaceIds(next)
+        for (const workspaceId of next) {
+          saveAccessibleWorkspace(user.pubkey, workspaceId)
+        }
+      })
+      .catch((error) => {
+        console.warn('Failed to load workspace invites', error)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [relayUrls, user?.pubkey])
+
+  const workspaceOwnerPubkey = loadWorkspaceOwnerPubkey(workspace.repoId)
+  const selectedPageCollaborators = selectedPageId ? loadPageCollaborators(workspace.repoId, selectedPageId) : []
+  const canViewWorkspace =
+    user !== null &&
+    (workspaceOwnerPubkey === null ||
+      user.pubkey === workspaceOwnerPubkey ||
+      selectedPageCollaborators.includes(user.pubkey))
+
+  useEffect(() => {
+    const idleCheckpointMs = 5 * 60 * 1000
+    let checkpointTimer: ReturnType<typeof setTimeout> | undefined
+
+    const scheduleCheckpoint = () => {
+      if (checkpointTimer) clearTimeout(checkpointTimer)
+      checkpointTimer = setTimeout(() => {
+        void workspace.flushDrafts()
+      }, idleCheckpointMs)
+    }
+
+    const subscription = workspace.draftStore.drafts$.subscribe((drafts) => {
+      if (Object.keys(drafts).length > 0) {
+        scheduleCheckpoint()
+      }
+    })
+
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        void workspace.checkpoint()
+      }
+    }
+
+    const handleLeave = () => {
+      void workspace.checkpoint()
+    }
+
+    window.addEventListener('beforeunload', handleLeave)
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+
+    return () => {
+      subscription.unsubscribe()
+      if (checkpointTimer) clearTimeout(checkpointTimer)
+      window.removeEventListener('beforeunload', handleLeave)
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+    }
+  }, [workspace])
 
   async function handleLogin() {
     if (typeof window === 'undefined' || !(window as any).nostr) {
@@ -76,14 +209,14 @@ function WorkspaceView({ workspace }: { workspace: Workspace }) {
 
       const profile: NostrProfile = { pubkey, name, picture }
       setUser(profile)
-      localStorage.setItem('nostr_user', JSON.stringify(profile))
+      sessionStorage.setItem('nostr_user', JSON.stringify(profile))
 
       if ((window as any).nostr.getRelays) {
         try {
           const relaysObj = await (window as any).nostr.getRelays()
           const userRelays = Object.keys(relaysObj)
           if (userRelays.length > 0) {
-            localStorage.setItem('nostr_relays', JSON.stringify(userRelays))
+            sessionStorage.setItem('nostr_relays', JSON.stringify(userRelays))
           }
         } catch (err) {
           console.warn('Failed to get relays from NIP-07 extension', err)
@@ -98,17 +231,32 @@ function WorkspaceView({ workspace }: { workspace: Workspace }) {
 
   function handleLogout() {
     setUser(null)
-    localStorage.removeItem('nostr_user')
-    localStorage.removeItem('nostr_relays')
+    sessionStorage.removeItem('nostr_user')
+    sessionStorage.removeItem('nostr_relays')
     window.location.reload()
   }
 
   function toggleWorkspaces() {
     setShowWorkspaces((current) => {
       const next = !current
-      localStorage.setItem('grid34_workspaces_collapsed', String(!next))
+      sessionStorage.setItem('grid34_workspaces_collapsed', String(!next))
       return next
     })
+  }
+
+  if (!canViewWorkspace) {
+    return (
+      <GuestShell
+        title={user ? 'Workspace locked' : 'Waiting to log in'}
+        message={
+          user
+            ? 'This workspace does not include your pubkey yet. Ask the owner to invite you.'
+            : 'Connect your Nostr account to open a workspace you own or have been invited to.'
+        }
+        actionLabel={user ? 'Sign out' : 'Connect Nostr'}
+        onAction={user ? handleLogout : handleLogin}
+      />
+    )
   }
 
   return (
@@ -205,7 +353,12 @@ function WorkspaceView({ workspace }: { workspace: Workspace }) {
                   </button>
                   {showWorkspaces && (
                     <div id="workspace-switcher-panel" className="flex flex-col gap-3 w-full max-w-full min-w-0 overflow-hidden">
-                      <WorkspaceSwitcher activeRepoId={workspace.repoId} />
+                      <WorkspaceSwitcher
+                        activeRepoId={workspace.repoId}
+                        accessibleWorkspaceIds={accessibleWorkspaceIds}
+                        currentUserPubkey={user?.pubkey ?? null}
+                        relayUrls={relayUrls}
+                      />
                       <div className="flex flex-col gap-2 w-full max-w-full min-w-0 overflow-hidden">
                         <span className="text-[9px] font-bold text-gray-400 uppercase tracking-wider px-1">Workspace Key</span>
                         <CekKeysManager repoId={workspace.repoId} cek={workspace.cek} />
@@ -227,12 +380,12 @@ function WorkspaceView({ workspace }: { workspace: Workspace }) {
                   <button
                     type="button"
                     className="sidebar-control sidebar-control--action"
-                    onClick={() => void workspace.flushDrafts()}
+                    onClick={() => void workspace.checkpoint()}
                   >
                     <svg className="sidebar-control__icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.21 8H18" />
                     </svg>
-                    <span>Flush drafts</span>
+                    <span>Checkpoint</span>
                   </button>
                 </div>
               </aside>
@@ -245,7 +398,12 @@ function WorkspaceView({ workspace }: { workspace: Workspace }) {
 
                 <div className="page-shell">
                   {selectedPageId ? (
-                    <PageEditor pageId={selectedPageId} />
+                    <PageEditor
+                      pageId={selectedPageId}
+                      workspaceId={workspace.repoId}
+                      currentUserPubkey={user?.pubkey ?? null}
+                      relayUrls={relayUrls}
+                    />
                   ) : (
                     <section className="locked-page" aria-label="Empty workspace">
                       <p className="page-editor__breadcrumbs">Workspace</p>
@@ -263,13 +421,23 @@ function WorkspaceView({ workspace }: { workspace: Workspace }) {
   )
 }
 
-function WorkspaceSwitcher({ activeRepoId }: { activeRepoId: string }) {
+function WorkspaceSwitcher({
+  activeRepoId,
+  accessibleWorkspaceIds,
+  currentUserPubkey,
+  relayUrls,
+}: {
+  activeRepoId: string
+  accessibleWorkspaceIds: string[]
+  currentUserPubkey: string | null
+  relayUrls: string[]
+}) {
   const [workspaces, setWorkspaces] = useState<string[]>([])
   const [newRepoId, setNewRepoId] = useState('')
   const [showImport, setShowImport] = useState(false)
 
   useEffect(() => {
-    const list = localStorage.getItem('grid34_workspaces')
+    const list = sessionStorage.getItem('grid34_workspaces')
     if (list) {
       try {
         setWorkspaces(JSON.parse(list))
@@ -283,11 +451,13 @@ function WorkspaceSwitcher({ activeRepoId }: { activeRepoId: string }) {
 
   const saveWorkspaces = (nextList: string[]) => {
     setWorkspaces(nextList)
-    localStorage.setItem('grid34_workspaces', JSON.stringify(nextList))
+    sessionStorage.setItem('grid34_workspaces', JSON.stringify(nextList))
   }
 
+  const visibleWorkspaces = Array.from(new Set([...workspaces, ...accessibleWorkspaceIds]))
+
   const handleSwitch = (repoId: string) => {
-    localStorage.setItem('grid34_active_repo_id', repoId)
+    sessionStorage.setItem('grid34_active_repo_id', repoId)
     window.location.reload()
   }
 
@@ -295,7 +465,16 @@ function WorkspaceSwitcher({ activeRepoId }: { activeRepoId: string }) {
     const randomId = 'repo-' + Math.random().toString(36).substring(2, 10)
     const nextList = Array.from(new Set([...workspaces, randomId]))
     saveWorkspaces(nextList)
-    localStorage.setItem('grid34_active_repo_id', randomId)
+    sessionStorage.setItem('grid34_active_repo_id', randomId)
+    if (currentUserPubkey) {
+      saveAccessibleWorkspace(currentUserPubkey, randomId)
+      void publishWorkspaceAccessSnapshot(relayUrls, {
+        workspaceId: randomId,
+        collaboratorPubkeys: [currentUserPubkey],
+        ownerPubkey: currentUserPubkey,
+        updatedAt: Date.now(),
+      })
+    }
     alert(`Created workspace "${randomId}". Switching...`)
     window.location.reload()
   }
@@ -305,7 +484,16 @@ function WorkspaceSwitcher({ activeRepoId }: { activeRepoId: string }) {
     if (!cleanId) return
     const nextList = Array.from(new Set([...workspaces, cleanId]))
     saveWorkspaces(nextList)
-    localStorage.setItem('grid34_active_repo_id', cleanId)
+    sessionStorage.setItem('grid34_active_repo_id', cleanId)
+    if (currentUserPubkey) {
+      saveAccessibleWorkspace(currentUserPubkey, cleanId)
+      void publishWorkspaceAccessSnapshot(relayUrls, {
+        workspaceId: cleanId,
+        collaboratorPubkeys: [currentUserPubkey],
+        ownerPubkey: currentUserPubkey,
+        updatedAt: Date.now(),
+      })
+    }
     alert(`Imported workspace "${cleanId}". Switching...`)
     window.location.reload()
   }
@@ -313,7 +501,7 @@ function WorkspaceSwitcher({ activeRepoId }: { activeRepoId: string }) {
   return (
     <div className="flex flex-col gap-0.5 w-full">
       <ul className="list-none p-0 m-0 flex flex-col gap-0.5">
-        {workspaces.map((id) => {
+        {visibleWorkspaces.map((id) => {
           const isActive = id === activeRepoId
           return (
             <li key={id} className="list-none">

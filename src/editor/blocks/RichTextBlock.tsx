@@ -3,6 +3,8 @@ import { useEditor, EditorContent } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import { useDraftStore } from '../contexts/storeContexts'
 import type { Block } from '../../storage/repo/types'
+import { serializeRichTextContent, shouldApplyIncomingRichTextContent } from './richTextSync'
+import { shouldSplitRichTextBlockOnEnter, type RichTextEnterBehavior } from './richTextEnterBehavior'
 
 export interface RichTextBlockProps {
   block: Block
@@ -13,6 +15,7 @@ export interface RichTextBlockProps {
   onSplitBlock?: (blockId: string, before: string, after: string) => void
   onMergeWithPrevious?: (blockId: string) => void
   onOpenSlashMenu?: (blockId: string, rect: DOMRect, query: string) => void
+  enterBehavior?: RichTextEnterBehavior
 }
 
 export function RichTextBlock({
@@ -24,9 +27,13 @@ export function RichTextBlock({
   onSplitBlock,
   onMergeWithPrevious,
   onOpenSlashMenu,
+  enterBehavior = 'split-block',
 }: RichTextBlockProps) {
   const draftStore = useDraftStore()
-  const isUpdatingRef = useRef(false)
+  const isApplyingExternalChangeRef = useRef(false)
+  const lastSyncedContentRef = useRef(
+    serializeRichTextContent(block.content.richText || (block.content.text as string) || '')
+  )
 
   const initialContent = block.content.richText || (block.content.text as string) || ''
 
@@ -49,16 +56,17 @@ export function RichTextBlock({
       },
     },
     onUpdate: ({ editor }) => {
-      isUpdatingRef.current = true
+      if (isApplyingExternalChangeRef.current) return
+
       const richText = editor.getJSON()
       const text = editor.getText()
+      lastSyncedContentRef.current = serializeRichTextContent(richText)
 
       draftStore.stage(pageId, block.id, {
         ...block.content,
         richText,
         text,
       })
-      isUpdatingRef.current = false
 
       // Trigger slash command if text starts with '/'
       if (text.startsWith('/') && onOpenSlashMenu) {
@@ -84,19 +92,24 @@ export function RichTextBlock({
     if (!editor) return
 
     const handleKeyDown = (view: any, event: KeyboardEvent) => {
-      if (event.key === 'Enter' && !event.shiftKey) {
-        // Handle enter split block
-        const { selection } = editor.state
-        if (selection.empty) {
-          event.preventDefault()
-          const totalText = editor.getText()
-          const cursorPos = selection.from - 1 // 1-based index adjustment in ProseMirror
-          const before = totalText.substring(0, cursorPos)
-          const after = totalText.substring(cursorPos)
+      if (event.key === 'Enter') {
+        if (shouldSplitRichTextBlockOnEnter(enterBehavior, event.shiftKey)) {
+          const { selection } = editor.state
+          if (selection.empty) {
+            event.preventDefault()
+            const totalText = editor.getText()
+            const cursorPos = selection.from - 1 // 1-based index adjustment in ProseMirror
+            const before = totalText.substring(0, cursorPos)
+            const after = totalText.substring(cursorPos)
 
-          if (onSplitBlock) {
-            onSplitBlock(block.id, before, after)
+            if (onSplitBlock) {
+              onSplitBlock(block.id, before, after)
+            }
+            return true
           }
+        } else {
+          event.preventDefault()
+          editor.commands.setHardBreak()
           return true
         }
       }
@@ -121,20 +134,29 @@ export function RichTextBlock({
         handleKeyDown,
       },
     })
-  }, [editor, block.id, onSplitBlock, onMergeWithPrevious])
+  }, [editor, block.id, enterBehavior, onSplitBlock, onMergeWithPrevious])
 
   // Sync external changes (e.g. from collab or other peers)
   useEffect(() => {
-    if (!editor || isUpdatingRef.current) return
+    if (!editor) return
 
     const incomingContent = block.content.richText || (block.content.text as string) || ''
-    const currentJSON = JSON.stringify(editor.getJSON())
-    const incomingJSON = typeof incomingContent === 'object' ? JSON.stringify(incomingContent) : null
+    if (
+      !shouldApplyIncomingRichTextContent({
+        incomingContent,
+        lastSyncedSignature: lastSyncedContentRef.current,
+        editorFocused: editor.isFocused,
+      })
+    ) {
+      return
+    }
 
-    if (incomingJSON && currentJSON !== incomingJSON) {
+    isApplyingExternalChangeRef.current = true
+    try {
       editor.commands.setContent(incomingContent)
-    } else if (typeof incomingContent === 'string' && editor.getText() !== incomingContent) {
-      editor.commands.setContent(incomingContent)
+      lastSyncedContentRef.current = serializeRichTextContent(incomingContent)
+    } finally {
+      isApplyingExternalChangeRef.current = false
     }
   }, [editor, block.content])
 

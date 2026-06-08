@@ -1,5 +1,6 @@
 import type { Block } from '../../storage/repo/types'
 import { RichTextBlock } from './RichTextBlock'
+import { getRichTextEnterBehavior } from './richTextEnterBehavior'
 
 export interface BlockProps {
   block: Block
@@ -23,6 +24,7 @@ export function ParagraphBlock({
       ariaLabel="Paragraph text"
       placeholder="Type '/' for commands..."
       className="w-full text-base leading-relaxed"
+      enterBehavior={getRichTextEnterBehavior(block.type)}
       onSplitBlock={onSplitBlock}
       onMergeWithPrevious={onMergeWithPrevious}
       onOpenSlashMenu={onOpenSlashMenu}

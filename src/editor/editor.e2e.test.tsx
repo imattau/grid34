@@ -27,8 +27,13 @@ describe('editor write-then-read round trip', () => {
   let pageSubject: BehaviorSubject<{ status: 'ready'; page: Page }>
 
   beforeEach(() => {
+    sessionStorage.setItem('nostr_user', JSON.stringify({ pubkey: 'pubkey-1', name: 'Alice' }))
     pages = { 'page-1': makePage() }
     pageSubject = new BehaviorSubject<{ status: 'ready'; page: Page }>({ status: 'ready', page: pages['page-1'] })
+  })
+
+  afterEach(() => {
+    sessionStorage.removeItem('nostr_user')
   })
 
   it('stages an edit, checkpoints it through fake CommitBuilder/Publisher, and re-renders with the optimistically-updated content', async () => {
@@ -37,6 +42,7 @@ describe('editor write-then-read round trip', () => {
       pageTree$: of({ pages: {} }),
       observePage: vi.fn(() => pageSubject.asObservable()),
       getPage: ((pageId: string) => pages[pageId]) as never,
+      listPageRevisions: vi.fn(() => []),
     } as never
 
     const commitBuilder: CommitBuilder = {

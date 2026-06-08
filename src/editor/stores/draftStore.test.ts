@@ -80,6 +80,7 @@ describe('DraftStore debounced checkpoint', () => {
   let commitBuilder: CommitBuilder
   let publisher: Publisher
   let store: DraftStore
+  let onCheckpoint: ReturnType<typeof vi.fn>
 
   beforeEach(() => {
     vi.useFakeTimers()
@@ -103,6 +104,7 @@ describe('DraftStore debounced checkpoint', () => {
         sig: 'sig',
       })),
     }
+    onCheckpoint = vi.fn()
     store = createDraftStore({
       repoStore,
       commitBuilder,
@@ -112,6 +114,7 @@ describe('DraftStore debounced checkpoint', () => {
       relayUrls: ['wss://relay-a'],
       repoId: 'workspace-repo',
       cek: new Uint8Array(32),
+      onCheckpoint,
       debounceMs: 1000,
     })
   })
@@ -139,6 +142,7 @@ describe('DraftStore debounced checkpoint', () => {
       })
     )
     expect(publisher.publishPatch).toHaveBeenCalledTimes(1)
+    expect(onCheckpoint).not.toHaveBeenCalled()
   })
 
   it('clears drafts$ after a successful publish', async () => {
@@ -177,6 +181,14 @@ describe('DraftStore debounced checkpoint', () => {
 
     expect(commitBuilder.buildPatchEventTemplate).toHaveBeenCalledTimes(1)
     expect(publisher.publishPatch).toHaveBeenCalledTimes(1)
+    expect(onCheckpoint).toHaveBeenCalledTimes(1)
+    expect(onCheckpoint).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 'page-1',
+        blocks: [expect.objectContaining({ id: 'block-1', content: { text: 'a' } })],
+      }),
+      'evt-1'
+    )
   })
 })
 

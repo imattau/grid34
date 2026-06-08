@@ -9,12 +9,13 @@ import { buildPatchEventTemplate } from '../storage/commit/commitBuilder'
 import { applyStateToIndex } from '../storage/index/indexer'
 import { CREATE_SCHEMA_SQL } from '../storage/index/schema'
 import { decryptContent, generateCEK } from '../storage/crypto/cryptoBox'
+import { createRevisionHistoryState, recordRevision as recordPageRevision, type RevisionHistoryState } from './revisionHistory'
 import { publishPatch as publishToRelays } from '../storage/publish/publisher'
 import { reduceRepo } from '../storage/repo/repoReducer'
-import type { Block, Page, PageTreeState, Patch } from '../storage/repo/types'
+import type { Page, PageTreeState, Patch } from '../storage/repo/types'
 import { createRepoStore } from '../storage/store/repoStore'
 import { loadSqlJs } from '../storage/sql/loadSqlJs'
-import type { EditorRepoStore } from '../editor/contexts/storeContexts'
+import type { EditorRepoStore, PageRevision } from '../editor/contexts/storeContexts'
 import type { ViewSpec } from '../editor/types'
 
 export interface Workspace {
@@ -24,6 +25,7 @@ export interface Workspace {
   selectedPageId: string | null
   cek: Uint8Array
   flushDrafts(): Promise<void>
+  checkpoint(): Promise<void>
   destroy(): void
 }
 
@@ -34,53 +36,7 @@ const LEGACY_PAGES_KEY = 'grid34_pages'
 
 type DatabaseRowsState = Record<string, Record<string, Record<string, unknown>>>
 
-function bytesToJson(bytes: Uint8Array): string {
-  return JSON.stringify(Array.from(bytes))
-}
-
-function jsonToBytes(raw: string): Uint8Array {
-  const parsed = JSON.parse(raw) as number[]
-  return new Uint8Array(parsed)
-}
-
-function loadBytes(key: string, generator: () => Uint8Array): Uint8Array {
-  const stored = localStorage.getItem(key)
-  if (stored) {
-    try {
-      return jsonToBytes(stored)
-    } catch {
-      // Fall through to regenerate.
-    }
-  }
-
-  const next = generator()
-  localStorage.setItem(key, bytesToJson(next))
-  return next
-}
-
-function loadInitialState(stateKey: string, legacyPagesKey: string, isDefaultRepo: boolean): PageTreeState {
-  const cached = localStorage.getItem(stateKey)
-  if (cached) {
-    try {
-      return JSON.parse(cached) as PageTreeState
-    } catch {
-      // Fall through to legacy/demo cache migration.
-    }
-  }
-
-  const legacy = localStorage.getItem(legacyPagesKey)
-  if (legacy) {
-    try {
-      return { pages: JSON.parse(legacy) as Record<string, Page> }
-    } catch {
-      // Ignore invalid legacy cache.
-    }
-  }
-
-  if (!isDefaultRepo) {
-    return { pages: {} }
-  }
-
+function createDefaultWorkspaceState(): PageTreeState {
   return {
     pages: {
       'page-1': {
@@ -141,6 +97,65 @@ function loadInitialState(stateKey: string, legacyPagesKey: string, isDefaultRep
   }
 }
 
+function createDefaultDatabaseRows(): DatabaseRowsState {
+  return {
+    'db-1': {
+      'row-1': { name: 'Apples', qty: 3 },
+      'row-2': { name: 'Bananas', qty: 5 },
+    },
+  }
+}
+
+function bytesToJson(bytes: Uint8Array): string {
+  return JSON.stringify(Array.from(bytes))
+}
+
+function jsonToBytes(raw: string): Uint8Array {
+  const parsed = JSON.parse(raw) as number[]
+  return new Uint8Array(parsed)
+}
+
+function loadBytes(key: string, generator: () => Uint8Array): Uint8Array {
+  const stored = localStorage.getItem(key)
+  if (stored) {
+    try {
+      return jsonToBytes(stored)
+    } catch {
+      // Fall through to regenerate.
+    }
+  }
+
+  const next = generator()
+  localStorage.setItem(key, bytesToJson(next))
+  return next
+}
+
+function loadInitialState(stateKey: string, legacyPagesKey: string, isDefaultRepo: boolean): PageTreeState {
+  const cached = localStorage.getItem(stateKey)
+  if (cached) {
+    try {
+      return JSON.parse(cached) as PageTreeState
+    } catch {
+      // Fall through to legacy/demo cache migration.
+    }
+  }
+
+  const legacy = localStorage.getItem(legacyPagesKey)
+  if (legacy) {
+    try {
+      return { pages: JSON.parse(legacy) as Record<string, Page> }
+    } catch {
+      // Ignore invalid legacy cache.
+    }
+  }
+
+  if (!isDefaultRepo) {
+    return { pages: {} }
+  }
+
+  return createDefaultWorkspaceState()
+}
+
 function loadInitialDatabaseRows(dbRowsKey: string, isDefaultRepo: boolean): DatabaseRowsState {
   const cached = localStorage.getItem(dbRowsKey)
   if (cached) {
@@ -155,12 +170,7 @@ function loadInitialDatabaseRows(dbRowsKey: string, isDefaultRepo: boolean): Dat
     return {}
   }
 
-  return {
-    'db-1': {
-      'row-1': { name: 'Apples', qty: 3 },
-      'row-2': { name: 'Bananas', qty: 5 },
-    },
-  }
+  return createDefaultDatabaseRows()
 }
 
 function persistState(state: PageTreeState, stateKey: string, legacyPagesKey: string): void {
@@ -170,6 +180,21 @@ function persistState(state: PageTreeState, stateKey: string, legacyPagesKey: st
 
 function persistDatabaseRows(rows: DatabaseRowsState, dbRowsKey: string): void {
   localStorage.setItem(dbRowsKey, JSON.stringify(rows))
+}
+
+function loadRevisionHistory(revisionsKey: string): RevisionHistoryState {
+  const cached = localStorage.getItem(revisionsKey)
+  if (!cached) return createRevisionHistoryState()
+
+  try {
+    return createRevisionHistoryState(JSON.parse(cached) as RevisionHistoryState)
+  } catch {
+    return createRevisionHistoryState()
+  }
+}
+
+function persistRevisionHistory(revisions: RevisionHistoryState, revisionsKey: string): void {
+  localStorage.setItem(revisionsKey, JSON.stringify(revisions))
 }
 
 function selectInitialPageId(state: PageTreeState): string | null {
@@ -243,15 +268,18 @@ export async function createWorkspace(): Promise<Workspace> {
   const db = new SQL.Database()
   db.run(CREATE_SCHEMA_SQL)
 
-  const repoId = (typeof window !== 'undefined' && localStorage.getItem('grid34_active_repo_id')) || 'workspace-repo'
+  const repoId =
+    (typeof window !== 'undefined' && sessionStorage.getItem('grid34_active_repo_id')) || 'workspace-repo'
   const stateKey = `grid34_state_${repoId}`
   const cekKey = `grid34_cek_${repoId}`
   const signingKey = `grid34_signing_key_${repoId}`
   const dbRowsKey = `grid34_db_rows_${repoId}`
   const legacyPagesKey = `grid34_pages_${repoId}`
+  const revisionsKey = `grid34_revisions_${repoId}`
 
   const cek = loadBytes(cekKey, () => generateCEK())
   const databaseRows = loadInitialDatabaseRows(dbRowsKey, repoId === 'workspace-repo')
+  const revisionHistory = loadRevisionHistory(revisionsKey)
   const eventStore = new EventStore()
   eventStore.verifyEvent = undefined
   const repoTag = `30617:${repoId}`
@@ -277,6 +305,19 @@ export async function createWorkspace(): Promise<Workspace> {
   let currentState = stateSubject.getValue()
   let destroyed = false
 
+  function recordRevision(page: Page, createdAt: number, id: string, force = false): void {
+    const didRecord = recordPageRevision({
+      page,
+      createdAt,
+      id,
+      force,
+      state: revisionHistory,
+    })
+    if (didRecord) {
+      persistRevisionHistory(revisionHistory, revisionsKey)
+    }
+  }
+
   function applyState(nextState: PageTreeState): void {
     currentState = nextState
     stateSubject.next(nextState)
@@ -286,6 +327,10 @@ export async function createWorkspace(): Promise<Workspace> {
   }
 
   applyState(currentState)
+  for (const page of Object.values(currentState.pages)) {
+    if (page.deleted) continue
+    recordRevision(page, page.updatedAt, `seed-${page.id}-${page.updatedAt}`, true)
+  }
 
   const patchSubscription = repoStoreBase.patches$.subscribe((event: any) => {
     if (destroyed) return
@@ -328,6 +373,12 @@ export async function createWorkspace(): Promise<Workspace> {
     getPage(pageId: string): Page | undefined {
       return currentState.pages[pageId]
     },
+    listPageRevisions(pageId: string): PageRevision[] {
+      return (revisionHistory[pageId] ?? []).map((revision) => ({
+        ...revision,
+        page: { ...revision.page, blocks: revision.page.blocks.map((block) => ({ ...block, content: { ...block.content } })) },
+      }))
+    },
   }
 
   const draftStore = createDraftStore({
@@ -361,6 +412,9 @@ export async function createWorkspace(): Promise<Workspace> {
     relayUrls,
     repoId,
     cek,
+    onCheckpoint: (page, revisionId) => {
+      recordRevision(page, Date.now(), revisionId, true)
+    },
     debounceMs: 250,
     retryBaseMs: 250,
   })
@@ -399,6 +453,13 @@ export async function createWorkspace(): Promise<Workspace> {
     repoId,
     flushDrafts: async () => {
       await draftStore.flush()
+    },
+    checkpoint: async () => {
+      await draftStore.flush()
+      for (const page of Object.values(currentState.pages)) {
+        if (page.deleted) continue
+        recordRevision(page, Date.now(), `checkpoint-${page.id}-${page.updatedAt}`, true)
+      }
     },
     destroy(): void {
       destroyed = true

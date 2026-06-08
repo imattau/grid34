@@ -30,6 +30,7 @@ export function BlockChrome({ block, children, onDelete }: BlockChromeProps) {
     <div
       ref={setNodeRef}
       style={style}
+      data-block-id={block.id}
       className="group relative flex items-start w-full my-1 rounded-lg hover:bg-gray-50/50 p-1 -ml-12 pl-12 transition-all duration-150"
     >
       {/* Chrome controls, revealed on hover without layout shifting */}
