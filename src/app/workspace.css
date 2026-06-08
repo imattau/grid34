@@ -787,30 +787,45 @@ button {
 }
 
 .ProseMirror li[data-type="taskItem"] {
-  display: flex;
-  align-items: flex-start;
-  gap: 0.5rem;
-  margin-top: 0.25rem;
-  margin-bottom: 0.25rem;
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: flex-start !important;
+  gap: 0.5rem !important;
+  margin-top: 0.25rem !important;
+  margin-bottom: 0.25rem !important;
+  list-style-type: none !important;
 }
 
 .ProseMirror li[data-type="taskItem"] > label {
-  display: flex;
-  align-items: center;
-  user-select: none;
-  margin-top: 0.25rem;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  user-select: none !important;
+  margin-top: 0.25rem !important;
+  flex-shrink: 0 !important;
 }
 
 .ProseMirror li[data-type="taskItem"] > label > input[type="checkbox"] {
-  cursor: pointer;
-  height: 1.1rem;
-  width: 1.1rem;
-  border-radius: 4px;
-  border: 1px solid var(--color-border-strong);
+  cursor: pointer !important;
+  height: 1.1rem !important;
+  width: 1.1rem !important;
+  border-radius: 4px !important;
+  border: 1px solid var(--color-border-strong) !important;
+  margin: 0 !important;
+}
+
+.ProseMirror li[data-type="taskItem"] > div {
+  flex: 1 !important;
+  min-width: 0 !important;
+}
+
+.ProseMirror li[data-type="taskItem"] > div > p {
+  margin: 0 !important;
 }
 
 .ProseMirror li[data-type="taskItem"][data-checked="true"] > div {
-  text-decoration: line-through;
-  color: var(--color-muted);
+  text-decoration: line-through !important;
+  color: var(--color-muted) !important;
 }
+
 
