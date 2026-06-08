@@ -3,6 +3,7 @@ import { DbViewStoreContext, DraftStoreContext, RepoStoreContext } from './edito
 import { PageEditor } from './editor/components/PageEditor'
 import { PageTree } from './editor/components/PageTree'
 import { createWorkspace, type Workspace } from './app/workspace'
+import { SimplePool } from 'nostr-tools/pool'
 import './app/workspace.css'
 
 function LoadingShell() {
@@ -52,15 +53,21 @@ function WorkspaceView({ workspace }: { workspace: Workspace }) {
       let picture = `https://robohash.org/${pubkey}.png?set=set4`
 
       try {
-        const res = await fetch(`https://api.nostr.band/v0/metadata/${pubkey}`)
-        const json = await res.json()
-        if (json && json.content) {
-          const meta = JSON.parse(json.content)
+        const pool = new SimplePool()
+        const relays = ['wss://nos.lol', 'wss://relay.damus.io', 'wss://relay.nostr.band']
+        const event = await pool.get(relays, {
+          kinds: [0],
+          authors: [pubkey],
+        })
+        if (event && event.content) {
+          const meta = JSON.parse(event.content)
           if (meta.name) name = meta.name
+          if (meta.display_name) name = meta.display_name
           if (meta.picture) picture = meta.picture
         }
+        pool.close(relays)
       } catch (err) {
-        console.warn('Failed to fetch Nostr metadata, using fallback details', err)
+        console.warn('Failed to fetch Nostr metadata from relays, using fallback details', err)
       }
 
       const profile: NostrProfile = { pubkey, name, picture }
