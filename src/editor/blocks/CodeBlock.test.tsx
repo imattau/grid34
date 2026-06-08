@@ -36,6 +36,7 @@ describe('CodeBlock', () => {
     renderWithDraftStore(makeBlock(), { stage })
     const textarea = screen.getByPlaceholderText('// Write code here...')
     fireEvent.change(textarea, { target: { value: 'const x = 5' } })
+    fireEvent.blur(textarea)
     expect(stage).toHaveBeenCalledWith('page-1', 'code-1', expect.objectContaining({ code: 'const x = 5' }))
   })
 })
