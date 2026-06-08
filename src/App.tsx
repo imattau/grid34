@@ -19,7 +19,10 @@ function LoadingShell() {
   return (
     <main className="workspace-shell workspace-shell--loading">
       <section className="loading-card" aria-live="polite">
-        <p className="eyebrow">grid34</p>
+        <div className="flex items-center gap-2 mb-4">
+          <img src="/logo.png" alt="grid34 logo" className="w-8 h-8 rounded-lg shadow-sm" />
+          <span className="font-mono text-xs font-bold tracking-wider text-accent dark:text-blue-400 uppercase">grid34</span>
+        </div>
         <h1>Booting workspace</h1>
         <p>Connecting the editor, draft pipeline, and table view model.</p>
       </section>
@@ -41,13 +44,16 @@ function GuestShell({
   return (
     <main className="workspace-shell workspace-shell--loading">
       <section className="loading-card" aria-live="polite">
-        <p className="eyebrow">grid34</p>
+        <div className="flex items-center gap-2 mb-4">
+          <img src="/logo.png" alt="grid34 logo" className="w-8 h-8 rounded-lg shadow-sm" />
+          <span className="font-mono text-xs font-bold tracking-wider text-accent dark:text-blue-400 uppercase">grid34</span>
+        </div>
         <h1>{title}</h1>
         <p>{message}</p>
         <button
           type="button"
           onClick={onAction}
-          className="mt-4 inline-flex items-center justify-center rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800"
+          className="mt-4 inline-flex items-center justify-center rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800 dark:bg-white dark:text-gray-900 dark:hover:bg-gray-100"
         >
           {actionLabel}
         </button>
@@ -351,6 +357,11 @@ function WorkspaceView({ workspace }: { workspace: Workspace }) {
           <main className="workspace-shell">
             <div className="workspace-frame">
               <aside className="workspace-sidebar">
+                {/* Brand Logo header */}
+                <div className="flex items-center gap-2.5 px-3 py-1 mb-1">
+                  <img src="/logo.png" alt="grid34 logo" className="w-5.5 h-5.5 rounded-lg shadow-sm" />
+                  <span className="font-mono text-xs font-bold tracking-wider text-gray-800 dark:text-gray-200 uppercase">grid34</span>
+                </div>
                 {/* Notion Workspace Switcher / Profile selector */}
                 <div className="relative">
                   <button
