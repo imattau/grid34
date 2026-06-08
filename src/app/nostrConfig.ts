@@ -5,6 +5,7 @@ export interface WorkspacesConfigPayload {
   workspaces: string[]
   activeRepoId: string
   updatedAt: number
+  ceks?: Record<string, string> // Map of repoId to JSON-serialized CEK byte array
 }
 
 export async function syncWorkspacesFromNostr(
@@ -27,6 +28,15 @@ export async function syncWorkspacesFromNostr(
       const decrypted = await (window as any).nostr.nip04.decrypt(pubkey, event.content)
       const data = JSON.parse(decrypted) as WorkspacesConfigPayload
       if (data && Array.isArray(data.workspaces)) {
+        // Sync encrypted CEK keys back to localStorage if not present locally
+        if (data.ceks) {
+          for (const [repoId, cekJson] of Object.entries(data.ceks)) {
+            const localKey = `grid34_cek_${repoId}`
+            if (!localStorage.getItem(localKey)) {
+              localStorage.setItem(localKey, cekJson)
+            }
+          }
+        }
         return data
       }
     }
@@ -46,10 +56,22 @@ export async function saveWorkspacesToNostr(
 
   try {
     const pool = new SimplePool({ enablePing: true, enableReconnect: true })
+    
+    // Gather CEK keys for all workspaces from localStorage
+    const ceks: Record<string, string> = {}
+    for (const repoId of workspaces) {
+      const localKey = `grid34_cek_${repoId}`
+      const storedCek = localStorage.getItem(localKey)
+      if (storedCek) {
+        ceks[repoId] = storedCek
+      }
+    }
+
     const payload: WorkspacesConfigPayload = {
       workspaces,
       activeRepoId,
       updatedAt: Date.now(),
+      ceks,
     }
     const encrypted = await (window as any).nostr.nip04.encrypt(pubkey, JSON.stringify(payload))
     const template = {
