@@ -8,18 +8,28 @@ export interface DbViewStore {
   notifyChanged(databaseId: string): void
 }
 
+const SAFE_PROPERTY_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/
+
+function assertSafePropertyName(name: string): void {
+  if (!SAFE_PROPERTY_NAME.test(name)) {
+    throw new Error(`Invalid database property name: ${name}`)
+  }
+}
+
 function buildQuery(view: ViewSpec): { sql: string; params: unknown[] } {
   const params: unknown[] = [view.databaseId]
   let sql = 'SELECT id, properties_json FROM db_rows WHERE database_block_id = ?'
 
   if (view.filter) {
     for (const [property, value] of Object.entries(view.filter)) {
+      assertSafePropertyName(property)
       sql += ` AND json_extract(properties_json, '$.${property}') = ?`
       params.push(value)
     }
   }
 
   if (view.sort) {
+    assertSafePropertyName(view.sort.property)
     const direction = view.sort.direction === 'desc' ? 'DESC' : 'ASC'
     sql += ` ORDER BY json_extract(properties_json, '$.${view.sort.property}') ${direction}`
   }
