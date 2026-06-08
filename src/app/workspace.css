@@ -173,10 +173,38 @@
   color: #eeeeee !important;
   border-color: rgba(255, 255, 255, 0.1) !important;
 }
-
 .dark .sidebar-section button:hover {
   background-color: rgba(255, 255, 255, 0.1) !important;
 }
+
+/* Loading shell and guest login card styling in dark mode */
+.dark .workspace-shell--loading {
+  background-color: var(--color-sidebar) !important;
+}
+
+.dark .loading-card {
+  background-color: #1a1a1a !important;
+  border-color: rgba(255, 255, 255, 0.08) !important;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45) !important;
+}
+
+.dark .loading-card h1 {
+  color: #ffffff !important;
+}
+
+.dark .loading-card p {
+  color: var(--color-muted) !important;
+}
+
+.dark .loading-card button {
+  background-color: #ffffff !important;
+  color: #121212 !important;
+}
+
+.dark .loading-card button:hover {
+  background-color: #e3e3e3 !important;
+}
+
 
 html,
 body,
