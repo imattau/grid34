@@ -234,7 +234,7 @@ body {
 }
 
 .loading-card {
-  width: min(100%, 28rem);
+  width: min(calc(100% - 2rem), 42rem);
   padding: 32px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);

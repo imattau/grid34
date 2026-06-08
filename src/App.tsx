@@ -18,13 +18,18 @@ import { syncWorkspacesFromNostr, saveWorkspacesToNostr } from './app/nostrConfi
 function LoadingShell() {
   return (
     <main className="workspace-shell workspace-shell--loading">
-      <section className="loading-card" aria-live="polite">
-        <div className="flex items-center gap-2 mb-4">
-          <img src="/logo.png" alt="grid34 logo" className="w-8 h-8 rounded-lg shadow-sm" />
-          <span className="font-mono text-xs font-bold tracking-wider text-accent dark:text-blue-400 uppercase">grid34</span>
+      <section className="loading-card flex flex-col md:flex-row gap-8 items-center md:items-stretch justify-between" aria-live="polite">
+        <div className="flex-1 flex flex-col justify-center min-w-0 text-left">
+          <h1 className="text-2xl font-bold tracking-tight text-gray-900 dark:text-white">Booting workspace</h1>
+          <p className="mt-3 text-sm text-gray-500 dark:text-gray-400 leading-relaxed">Connecting the editor, draft pipeline, and table view model.</p>
         </div>
-        <h1>Booting workspace</h1>
-        <p>Connecting the editor, draft pipeline, and table view model.</p>
+
+        <div className="hidden md:block w-px bg-gray-200/60 dark:bg-gray-800" />
+
+        <div className="flex-shrink-0 flex flex-col items-center justify-center gap-2.5 p-4 md:p-6 bg-gray-50/50 dark:bg-gray-800/10 rounded-2xl border border-gray-100/50 dark:border-gray-850/20 min-w-[140px]">
+          <img src="/logo.png" alt="grid34 logo" className="w-20 h-20 rounded-2xl shadow-md hover:scale-105 transition-transform duration-300" />
+          <span className="font-mono text-sm font-bold tracking-widest text-gray-800 dark:text-gray-200 uppercase mt-1">grid34</span>
+        </div>
       </section>
     </main>
   )
@@ -43,20 +48,27 @@ function GuestShell({
 }) {
   return (
     <main className="workspace-shell workspace-shell--loading">
-      <section className="loading-card" aria-live="polite">
-        <div className="flex items-center gap-2 mb-4">
-          <img src="/logo.png" alt="grid34 logo" className="w-8 h-8 rounded-lg shadow-sm" />
-          <span className="font-mono text-xs font-bold tracking-wider text-accent dark:text-blue-400 uppercase">grid34</span>
+      <section className="loading-card flex flex-col md:flex-row gap-8 items-center md:items-stretch justify-between" aria-live="polite">
+        <div className="flex-1 flex flex-col justify-center min-w-0 text-left">
+          <h1 className="text-2xl font-bold tracking-tight text-gray-900 dark:text-white">{title}</h1>
+          <p className="mt-3 text-sm text-gray-500 dark:text-gray-400 leading-relaxed">{message}</p>
+          <div className="mt-6">
+            <button
+              type="button"
+              onClick={onAction}
+              className="inline-flex items-center justify-center rounded-xl bg-gray-900 px-5 py-2.5 text-sm font-semibold text-white hover:bg-gray-800 dark:bg-white dark:text-gray-900 dark:hover:bg-gray-100 transition-all cursor-pointer shadow-sm"
+            >
+              {actionLabel}
+            </button>
+          </div>
         </div>
-        <h1>{title}</h1>
-        <p>{message}</p>
-        <button
-          type="button"
-          onClick={onAction}
-          className="mt-4 inline-flex items-center justify-center rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800 dark:bg-white dark:text-gray-900 dark:hover:bg-gray-100"
-        >
-          {actionLabel}
-        </button>
+
+        <div className="hidden md:block w-px bg-gray-200/60 dark:bg-gray-800" />
+
+        <div className="flex-shrink-0 flex flex-col items-center justify-center gap-2.5 p-4 md:p-6 bg-gray-50/50 dark:bg-gray-800/10 rounded-2xl border border-gray-100/50 dark:border-gray-850/20 min-w-[140px]">
+          <img src="/logo.png" alt="grid34 logo" className="w-20 h-20 rounded-2xl shadow-md hover:scale-105 transition-transform duration-300" />
+          <span className="font-mono text-sm font-bold tracking-widest text-gray-800 dark:text-gray-200 uppercase mt-1">grid34</span>
+        </div>
       </section>
     </main>
   )
