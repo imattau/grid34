@@ -8,6 +8,7 @@ import { ImageBlock } from './ImageBlock'
 import { TodoBlock } from './TodoBlock'
 import { CalloutBlock } from './CalloutBlock'
 import { CodeBlock } from './CodeBlock'
+import { TableBlock } from './TableBlock'
 
 export type BlockType =
   | 'paragraph'
@@ -19,6 +20,7 @@ export type BlockType =
   | 'todo'
   | 'callout'
   | 'code'
+  | 'table'
 
 export type { BlockProps }
 
@@ -32,4 +34,5 @@ export const blockComponentRegistry: Record<BlockType, ComponentType<BlockProps>
   todo: TodoBlock,
   callout: CalloutBlock,
   code: CodeBlock,
+  table: TableBlock,
 }

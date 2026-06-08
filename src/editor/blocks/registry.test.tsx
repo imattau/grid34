@@ -9,6 +9,7 @@ import { ImageBlock } from './ImageBlock'
 import { TodoBlock } from './TodoBlock'
 import { CalloutBlock } from './CalloutBlock'
 import { CodeBlock } from './CodeBlock'
+import { TableBlock } from './TableBlock'
 
 describe('blockComponentRegistry', () => {
   it('maps each v1 BlockType to its component', () => {
@@ -21,5 +22,6 @@ describe('blockComponentRegistry', () => {
     expect(blockComponentRegistry.todo).toBe(TodoBlock)
     expect(blockComponentRegistry.callout).toBe(CalloutBlock)
     expect(blockComponentRegistry.code).toBe(CodeBlock)
+    expect(blockComponentRegistry.table).toBe(TableBlock)
   })
 })

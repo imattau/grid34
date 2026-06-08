@@ -21,6 +21,7 @@ export const SLASH_MENU_ITEMS: SlashMenuItem[] = [
   { label: 'To-do list', type: 'todo', description: 'Checkbox todo item', icon: '☑️', content: { checked: false } },
   { label: 'Callout', type: 'callout', description: 'Highlight writing', icon: '💡', content: { emoji: '💡' } },
   { label: 'Code sandbox', type: 'code', description: 'Code block with sandbox runner', icon: '💻', content: { code: '', language: 'javascript' } },
+  { label: 'Table', type: 'table', description: 'Simple static table grid', icon: '📋', content: { headers: ['Column 1', 'Column 2'], rows: [['', ''], ['', '']] } },
 ]
 
 interface SlashMenuProps {
