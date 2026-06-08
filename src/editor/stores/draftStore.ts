@@ -26,6 +26,7 @@ export interface CheckpointListener {
 export type DraftMap = Record<string, { pageId: string; content: Record<string, unknown> }>
 
 export interface DraftStore {
+  cek?: Uint8Array
   stage(pageId: string, blockId: string, content: Record<string, unknown>): void
   drafts$: Observable<DraftMap>
   flush(): Promise<void>
@@ -258,6 +259,7 @@ export function createDraftStore(options: CreateDraftStoreOptions): DraftStore {
   }
 
   return {
+    cek,
     stage,
     drafts$: draftsSubject.asObservable(),
     flush,

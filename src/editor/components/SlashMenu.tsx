@@ -16,6 +16,8 @@ export const SLASH_MENU_ITEMS: SlashMenuItem[] = [
   { label: 'Heading 3', type: 'heading', description: 'Small section heading', icon: '🥞', content: { level: 3 } },
   { label: 'Bulleted list', type: 'list', description: 'Simple bulleted list', icon: '•', content: { kind: 'bullet' } },
   { label: 'Numbered list', type: 'list', description: 'Numbered list', icon: '1.', content: { kind: 'numbered' } },
+  { label: 'Divider', type: 'divider', description: 'Visually divide sections', icon: '―', content: {} },
+  { label: 'Image', type: 'image', description: 'NIP-44 encrypted image upload', icon: '🖼️', content: {} },
 ]
 
 interface SlashMenuProps {

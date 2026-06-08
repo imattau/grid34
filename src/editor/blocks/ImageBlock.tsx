@@ -1,0 +1,392 @@
+import { useEffect, useState } from 'react'
+import type { Block } from '../../storage/repo/types'
+import type { BlockProps } from './ParagraphBlock'
+import { useDraftStore } from '../contexts/storeContexts'
+import { encryptContent, decryptContent } from '../../storage/crypto/cryptoBox'
+
+// Helper to convert buffer to hex string
+function bufferToHex(buffer: ArrayBuffer): string {
+  return Array.from(new Uint8Array(buffer))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('')
+}
+
+// Helper to compute SHA-256 hash of a string
+async function sha256(text: string): string {
+  const msgBuffer = new TextEncoder().encode(text)
+  const hashBuffer = await window.crypto.subtle.digest('SHA-256', msgBuffer)
+  return bufferToHex(hashBuffer)
+}
+
+// Sign authentication event using NIP-07 extension or local fallback
+async function signAuthEvent(template: { kind: number; tags: string[][]; content: string; created_at: number }) {
+  const win = window as any
+  if (win.nostr?.signEvent) {
+    try {
+      return await win.nostr.signEvent(template)
+    } catch (err) {
+      console.warn('NIP-07 signEvent failed, trying local fallback', err)
+    }
+  }
+
+  // Fallback to local signing key
+  const stored = localStorage.getItem('grid34_workspace_signing_key')
+  if (stored) {
+    try {
+      const parsed = JSON.parse(stored) as number[]
+      const secretKey = new Uint8Array(parsed)
+      // Import/use tools from nostr-tools
+      const { finalizeEvent } = await import('nostr-tools/pure')
+      return finalizeEvent(template, secretKey)
+    } catch (err) {
+      console.error('Failed to sign event using local fallback', err)
+    }
+  }
+  throw new Error('Signer unavailable. Please log in with a Nostr extension or generate a local key.')
+}
+
+export function ImageBlock({ block, pageId }: BlockProps) {
+  const draftStore = useDraftStore()
+  const cek = draftStore.cek
+
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [decryptedSrc, setDecryptedSrc] = useState<string | null>(null)
+  const [decrypting, setDecrypting] = useState(false)
+
+  const [serverType, setServerType] = useState<'blossom' | 'nip96'>('blossom')
+  const [serverUrl, setServerUrl] = useState('https://blossom.primal.net')
+
+  const url = block.content.url as string | undefined
+  const caption = (block.content.caption as string) || ''
+
+  // Automatically decrypt image if url is present
+  useEffect(() => {
+    if (!url) {
+      setDecryptedSrc(null)
+      return
+    }
+
+    let active = true
+    setDecrypting(true)
+    setError(null)
+
+    async function fetchAndDecrypt() {
+      try {
+        if (!cek) {
+          throw new Error('No shared CEK available to decrypt this image')
+        }
+
+        const res = await fetch(url)
+        if (!res.ok) {
+          throw new Error(`Failed to download encrypted image (HTTP ${res.status})`)
+        }
+
+        const ciphertext = await res.text()
+        const plaintext = decryptContent(ciphertext, cek)
+
+        let parsed: { mimeType: string; data: string }
+        try {
+          parsed = JSON.parse(plaintext)
+        } catch {
+          // If it is not JSON, assume raw base64 data
+          parsed = { mimeType: 'image/png', data: plaintext }
+        }
+
+        if (active) {
+          setDecryptedSrc(parsed.data.startsWith('data:') ? parsed.data : `data:${parsed.mimeType};base64,${parsed.data}`)
+        }
+      } catch (err: any) {
+        if (active) {
+          setError(err.message || String(err))
+        }
+      } finally {
+        if (active) {
+          setDecrypting(false)
+        }
+      }
+    }
+
+    void fetchAndDecrypt()
+
+    return () => {
+      active = false
+    }
+  }, [url, cek])
+
+  // Handle uploading of file
+  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    setLoading(true)
+    setError(null)
+
+    try {
+      if (!cek) {
+        throw new Error('CEK not available. Ensure you have an active workspace key.')
+      }
+
+      // 1. Read file as base64
+      const reader = new FileReader()
+      const base64Promise = new Promise<string>((resolve, reject) => {
+        reader.onload = () => {
+          const result = reader.result as string
+          resolve(result)
+        };
+        reader.onerror = reject
+      })
+      reader.readAsDataURL(file)
+      const dataUrl = await base64Promise
+
+      // 2. Encrypt file contents
+      const payload = JSON.stringify({
+        mimeType: file.type,
+        data: dataUrl,
+      })
+      const ciphertext = encryptContent(payload, cek)
+      const blob = new Blob([ciphertext], { type: 'text/plain' })
+
+      // 3. Compute hash and build auth token
+      const fileHash = await sha256(ciphertext)
+      const now = Math.floor(Date.now() / 1000)
+
+      let uploadUrl = serverUrl.replace(/\/$/, '')
+      let finalFileUrl = ''
+
+      if (serverType === 'blossom') {
+        uploadUrl = `${uploadUrl}/upload`
+        
+        const authEventTemplate = {
+          kind: 24242,
+          created_at: now,
+          tags: [
+            ['t', 'upload'],
+            ['x', fileHash],
+            ['expiration', String(now + 300)],
+          ],
+          content: 'Upload encrypted grid34 media file',
+        }
+
+        const signedEvent = await signAuthEvent(authEventTemplate)
+        const base64Auth = btoa(JSON.stringify(signedEvent))
+
+        const response = await fetch(uploadUrl, {
+          method: 'PUT',
+          headers: {
+            'Authorization': `Nostr ${base64Auth}`,
+          },
+          body: blob,
+        })
+
+        if (!response.ok) {
+          const errText = await response.text()
+          throw new Error(`Blossom upload failed (${response.status}): ${errText}`)
+        }
+
+        const resData = await response.json()
+        finalFileUrl = resData.url || `${serverUrl.replace(/\/$/, '')}/${fileHash}`
+      } else {
+        // NIP-96 Upload
+        // A. Resolve api_url from config
+        const configUrl = `${uploadUrl}/.well-known/nostr/nip96.json`
+        const configRes = await fetch(configUrl)
+        if (!configRes.ok) {
+          throw new Error(`Failed to load NIP-96 configuration from ${configUrl}`)
+        }
+        const config = await configRes.json()
+        const apiUrl = config.api_url
+        if (!apiUrl) {
+          throw new Error('NIP-96 config is missing api_url')
+        }
+
+        const authEventTemplate = {
+          kind: 27235,
+          created_at: now,
+          tags: [
+            ['u', apiUrl],
+            ['method', 'POST'],
+          ],
+          content: 'Upload encrypted grid34 media file via NIP-96',
+        }
+
+        const signedEvent = await signAuthEvent(authEventTemplate)
+        const base64Auth = btoa(JSON.stringify(signedEvent))
+
+        const formData = new FormData()
+        formData.append('file', blob, 'encrypted_image.txt')
+
+        const response = await fetch(apiUrl, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Nostr ${base64Auth}`,
+          },
+          body: formData,
+        })
+
+        if (!response.ok) {
+          const errText = await response.text()
+          throw new Error(`NIP-96 upload failed (${response.status}): ${errText}`)
+        }
+
+        const resData = await response.json()
+        if (resData.status === 'success' && resData.nip96?.url) {
+          finalFileUrl = resData.nip96.url
+        } else if (resData.url) {
+          finalFileUrl = resData.url
+        } else {
+          throw new Error('Upload succeeded but no file URL was returned by server.')
+        }
+      }
+
+      // 4. Update block with the URL
+      draftStore.stage(pageId, block.id, {
+        ...block.content,
+        type: 'image',
+        url: finalFileUrl,
+        caption: file.name,
+      })
+
+    } catch (err: any) {
+      setError(err.message || String(err))
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleClear = () => {
+    draftStore.stage(pageId, block.id, {
+      ...block.content,
+      type: 'image',
+      url: undefined,
+      caption: '',
+    })
+    setDecryptedSrc(null)
+    setError(null)
+  }
+
+  const handleSaveCaption = (newCaption: string) => {
+    draftStore.stage(pageId, block.id, {
+      ...block.content,
+      type: 'image',
+      caption: newCaption,
+    })
+  }
+
+  if (url && decryptedSrc) {
+    return (
+      <div className="w-full flex flex-col gap-2 p-1 group/image select-none">
+        <div className="relative rounded-xl overflow-hidden border border-gray-200 dark:border-gray-800 shadow-sm max-w-2xl mx-auto bg-gray-50/50">
+          <img
+            src={decryptedSrc}
+            alt={caption}
+            className="w-full h-auto object-contain max-h-[450px]"
+          />
+          <button
+            type="button"
+            onClick={handleClear}
+            className="absolute top-2 right-2 bg-white/80 dark:bg-black/80 hover:bg-white dark:hover:bg-black p-1.5 rounded-lg shadow text-gray-500 hover:text-red-500 transition-colors duration-150 cursor-pointer"
+            title="Remove Image"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+            </svg>
+          </button>
+        </div>
+        <input
+          type="text"
+          value={caption}
+          onChange={(e) => handleSaveCaption(e.target.value)}
+          placeholder="Add a caption..."
+          className="text-center text-xs text-gray-400 dark:text-gray-500 bg-transparent border-none outline-none focus:ring-0 w-full"
+        />
+      </div>
+    )
+  }
+
+  return (
+    <div className="w-full flex flex-col gap-4 border border-dashed border-gray-250 dark:border-gray-800 rounded-xl p-6 bg-gray-50/20 dark:bg-gray-900/10">
+      <div className="flex flex-col gap-1 text-center items-center justify-center">
+        <span className="text-3xl">🖼️</span>
+        <h4 className="font-semibold text-sm text-gray-700 dark:text-gray-300">Upload Encrypted Image</h4>
+        <p className="text-xs text-gray-400 max-w-sm">
+          Images are NIP-44 encrypted using the shared CEK in your browser before uploading to the server.
+        </p>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-lg mx-auto w-full">
+        <div className="flex flex-col gap-1.5">
+          <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Server Type</label>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setServerType('blossom')
+                setServerUrl('https://blossom.primal.net')
+              }}
+              className={`flex-1 py-1.5 text-xs font-semibold rounded-lg border transition-all ${
+                serverType === 'blossom'
+                  ? 'bg-gray-950 text-white border-gray-950 dark:bg-white dark:text-gray-950'
+                  : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50 dark:bg-gray-850 dark:text-gray-300 dark:border-gray-850'
+              }`}
+            >
+              Blossom
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setServerType('nip96')
+                setServerUrl('https://void.cat')
+              }}
+              className={`flex-1 py-1.5 text-xs font-semibold rounded-lg border transition-all ${
+                serverType === 'nip96'
+                  ? 'bg-gray-950 text-white border-gray-950 dark:bg-white dark:text-gray-950'
+                  : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50 dark:bg-gray-850 dark:text-gray-300 dark:border-gray-850'
+              }`}
+            >
+              NIP-96
+            </button>
+          </div>
+        </div>
+
+        <div className="flex flex-col gap-1.5">
+          <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Server URL</label>
+          <input
+            type="url"
+            value={serverUrl}
+            onChange={(e) => setServerUrl(e.target.value)}
+            className="w-full text-xs border border-gray-200 dark:border-gray-800 rounded-lg px-3 py-1.5 bg-white dark:bg-gray-950 outline-none focus:ring-1 focus:ring-gray-300 text-gray-700 dark:text-gray-200"
+          />
+        </div>
+      </div>
+
+      <div className="flex flex-col items-center justify-center gap-2">
+        {loading || decrypting ? (
+          <div className="flex items-center gap-2 text-sm text-gray-500 font-semibold">
+            <svg className="animate-spin h-4 w-4 text-gray-500" fill="none" viewBox="0 0 24 24">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+            </svg>
+            <span>{decrypting ? 'Decrypting Image...' : 'Encrypting & Uploading...'}</span>
+          </div>
+        ) : (
+          <label className="inline-flex items-center justify-center rounded-xl bg-gray-900 px-5 py-2.5 text-sm font-semibold text-white hover:bg-gray-800 dark:bg-white dark:text-gray-900 dark:hover:bg-gray-100 transition-all cursor-pointer shadow-sm">
+            <span>Select Image</span>
+            <input
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={handleUpload}
+            />
+          </label>
+        )}
+
+        {error && (
+          <div className="text-xs text-red-500 bg-red-50 dark:bg-red-950/20 px-3 py-1.5 rounded-lg max-w-md text-center mt-2 border border-red-100 dark:border-red-950/50">
+            {error}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}

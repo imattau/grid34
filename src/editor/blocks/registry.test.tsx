@@ -4,6 +4,8 @@ import { ParagraphBlock } from './ParagraphBlock'
 import { HeadingBlock } from './HeadingBlock'
 import { ListBlock } from './ListBlock'
 import { DatabaseBlock } from './DatabaseBlock'
+import { DividerBlock } from './DividerBlock'
+import { ImageBlock } from './ImageBlock'
 
 describe('blockComponentRegistry', () => {
   it('maps each v1 BlockType to its component', () => {
@@ -11,5 +13,7 @@ describe('blockComponentRegistry', () => {
     expect(blockComponentRegistry.heading).toBe(HeadingBlock)
     expect(blockComponentRegistry.list).toBe(ListBlock)
     expect(blockComponentRegistry.database).toBe(DatabaseBlock)
+    expect(blockComponentRegistry.divider).toBe(DividerBlock)
+    expect(blockComponentRegistry.image).toBe(ImageBlock)
   })
 })
