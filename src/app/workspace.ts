@@ -22,6 +22,7 @@ export interface Workspace {
   draftStore: DraftStore
   dbViewStore: DbViewStore
   selectedPageId: string | null
+  cek: Uint8Array
   flushDrafts(): Promise<void>
   destroy(): void
 }
@@ -368,6 +369,7 @@ export async function createWorkspace(): Promise<Workspace> {
     draftStore,
     dbViewStore,
     selectedPageId: selectInitialPageId(currentState),
+    cek,
     flushDrafts: async () => {
       await draftStore.flush()
     },

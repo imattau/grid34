@@ -156,6 +156,13 @@ function WorkspaceView({ workspace }: { workspace: Workspace }) {
                   <PageTree selectedPageId={selectedPageId} onSelectPage={setSelectedPageId} />
                 </div>
 
+                <div className="sidebar-section mt-4 border-t border-gray-150 pt-3.5">
+                  <div className="sidebar-section__header mb-1.5">
+                    <span>Encryption Key (CEK)</span>
+                  </div>
+                  <CekKeysManager cek={workspace.cek} />
+                </div>
+
                 <div className="sidebar-footer">
                   <button
                     type="button"
@@ -193,6 +200,109 @@ function WorkspaceView({ workspace }: { workspace: Workspace }) {
         </DbViewStoreContext.Provider>
       </DraftStoreContext.Provider>
     </RepoStoreContext.Provider>
+  )
+}
+
+function CekKeysManager({ cek }: { cek: Uint8Array }) {
+  const [showKey, setShowKey] = useState(false)
+  const [importHex, setImportHex] = useState('')
+  const [copied, setCopied] = useState(false)
+
+  const hexKey = Array.from(cek, (b) => b.toString(16).padStart(2, '0')).join('')
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(hexKey)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch (err) {
+      alert('Failed to copy key to clipboard')
+    }
+  }
+
+  const handleImport = () => {
+    const cleanHex = importHex.trim()
+    if (cleanHex.length !== 64) {
+      alert('Key must be exactly 64 characters (32 bytes) hex string.')
+      return
+    }
+
+    try {
+      const bytes = new Uint8Array(32)
+      for (let i = 0; i < 32; i++) {
+        bytes[i] = parseInt(cleanHex.slice(i * 2, i * 2 + 2), 16)
+      }
+
+      localStorage.setItem('grid34_workspace_cek', JSON.stringify(Array.from(bytes)))
+      alert('Workspace Encryption Key updated. Reloading page...')
+      window.location.reload()
+    } catch (err) {
+      alert('Invalid hex format')
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-2 p-2.5 bg-gray-50/50 rounded-xl border border-gray-250/10 text-xs">
+      <div className="flex flex-col gap-1">
+        <span className="text-[9px] font-bold text-gray-400 uppercase tracking-wider">Current CEK (hex)</span>
+        <div className="flex items-center gap-1">
+          <span className="font-mono bg-white border border-gray-200 rounded px-1.5 py-1.5 flex-1 truncate select-all text-[10px] text-gray-600">
+            {showKey ? hexKey : '••••••••••••••••••••••••••••••••'}
+          </span>
+          <button
+            type="button"
+            onClick={() => setShowKey(!showKey)}
+            className="p-1 rounded hover:bg-gray-200 text-gray-400 hover:text-gray-600 transition-colors flex-shrink-0"
+            title={showKey ? 'Hide key' : 'Show key'}
+          >
+            {showKey ? (
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
+              </svg>
+            ) : (
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+              </svg>
+            )}
+          </button>
+          <button
+            type="button"
+            onClick={handleCopy}
+            className="p-1 rounded hover:bg-gray-200 text-gray-400 hover:text-gray-600 transition-colors flex-shrink-0"
+            title="Copy key"
+          >
+            {copied ? (
+              <span className="text-green-600 text-[10px] font-bold">✓</span>
+            ) : (
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" />
+              </svg>
+            )}
+          </button>
+        </div>
+      </div>
+
+      <div className="flex flex-col gap-1 mt-1">
+        <span className="text-[9px] font-bold text-gray-400 uppercase tracking-wider">Import/Set CEK (hex)</span>
+        <div className="flex gap-1.5">
+          <input
+            type="text"
+            className="bg-white border border-gray-250 rounded px-1.5 py-1 flex-1 min-w-0 outline-none focus:ring-1 focus:ring-gray-300 font-mono text-[9px] text-gray-600"
+            placeholder="64-char hex key"
+            value={importHex}
+            onChange={(e) => setImportHex(e.target.value)}
+          />
+          <button
+            type="button"
+            onClick={handleImport}
+            className="px-2 py-1 bg-gray-900 text-white rounded hover:bg-gray-800 font-medium transition-colors flex-shrink-0 text-[10px]"
+          >
+            Apply
+          </button>
+        </div>
+      </div>
+    </div>
   )
 }
 
