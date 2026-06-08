@@ -67,7 +67,7 @@ export function PageEditor({ pageId, workspaceId: workspaceIdProp, currentUserPu
 
   const workspaceId =
     workspaceIdProp ??
-    ((typeof window !== 'undefined' && sessionStorage.getItem('grid34_active_repo_id')) || 'workspace-repo')
+    ((typeof window !== 'undefined' && localStorage.getItem('grid34_active_repo_id')) || 'workspace-repo')
   const resolvedUserPubkey = currentUserPubkey ?? readStoredNostrPubkey()
   const workspaceOwnerPubkey = loadWorkspaceOwnerPubkey(workspaceId)
   const canEdit =
@@ -177,6 +177,8 @@ export function PageEditor({ pageId, workspaceId: workspaceIdProp, currentUserPu
     .slice()
     .sort((a, b) => a.order - b.order)
 
+  let numberedListIndex = 0
+
   function handleDragEnd(event: DragEndEvent) {
     const { active, over } = event
     if (!over || active.id === over.id) return
@@ -248,6 +250,7 @@ export function PageEditor({ pageId, workspaceId: workspaceIdProp, currentUserPu
 
     const newBlockId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2, 15)
     editorDraftStore.stage(pageId, newBlockId, {
+      ...currentBlock.content,
       type: currentBlock.type,
       order: newOrder,
       text: after,
@@ -654,9 +657,21 @@ export function PageEditor({ pageId, workspaceId: workspaceIdProp, currentUserPu
           )}
           <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
             <SortableContext items={sortedBlocks.map((b) => b.id)} strategy={verticalListSortingStrategy}>
-              {sortedBlocks.map((block) => {
+              {sortedBlocks.map((block, index) => {
                 const Component = blockComponentRegistry[block.type as keyof typeof blockComponentRegistry]
                 if (!Component) return null
+                const listIndex =
+                  block.type === 'list' && block.content.kind === 'numbered'
+                    ? (() => {
+                        const previousBlock = sortedBlocks[index - 1]
+                        if (previousBlock?.type === 'list' && previousBlock.content.kind === 'numbered') {
+                          numberedListIndex += 1
+                        } else {
+                          numberedListIndex = 1
+                        }
+                        return numberedListIndex
+                      })()
+                    : undefined
                 return (
                   <BlockChrome
                     key={block.id}
@@ -667,6 +682,7 @@ export function PageEditor({ pageId, workspaceId: workspaceIdProp, currentUserPu
                     <Component
                       block={block}
                       pageId={pageId}
+                      listIndex={listIndex}
                       onSplitBlock={handleSplitBlock}
                       onMergeWithPrevious={handleMergeWithPrevious}
                       onOpenSlashMenu={handleOpenSlashMenu}

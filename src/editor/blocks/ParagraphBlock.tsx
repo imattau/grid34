@@ -5,6 +5,7 @@ import { getRichTextEnterBehavior } from './richTextEnterBehavior'
 export interface BlockProps {
   block: Block
   pageId: string
+  listIndex?: number
   onSplitBlock?: (blockId: string, before: string, after: string) => void
   onMergeWithPrevious?: (blockId: string) => void
   onOpenSlashMenu?: (blockId: string, rect: DOMRect) => void

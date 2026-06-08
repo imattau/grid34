@@ -4,11 +4,11 @@ import { getRichTextEnterBehavior, shouldSplitRichTextBlockOnEnter } from './ric
 describe('getRichTextEnterBehavior', () => {
   it('treats paragraph blocks as newline editing', () => {
     expect(getRichTextEnterBehavior('paragraph')).toBe('newline')
+    expect(getRichTextEnterBehavior('list')).toBe('newline')
   })
 
   it('keeps other block types on split-block enter behavior', () => {
     expect(getRichTextEnterBehavior('heading')).toBe('split-block')
-    expect(getRichTextEnterBehavior('list')).toBe('split-block')
     expect(getRichTextEnterBehavior('database')).toBe('split-block')
   })
 

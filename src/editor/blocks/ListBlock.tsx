@@ -9,16 +9,20 @@ function listKind(block: Block): 'bullet' | 'numbered' {
 export function ListBlock({
   block,
   pageId,
+  listIndex = 1,
   onSplitBlock,
   onMergeWithPrevious,
   onOpenSlashMenu,
 }: BlockProps) {
   const kind = listKind(block)
-  const marker = kind === 'numbered' ? `${block.order + 1}.` : '•'
+  const marker = kind === 'numbered' ? `${listIndex}.` : '•'
 
   return (
-    <div className="flex items-start gap-2 w-full" role="listitem">
-      <span className="text-gray-400 select-none min-w-[1.25rem] text-right font-medium" aria-hidden="true">
+    <div
+      className="flex items-start gap-2 w-full cursor-text"
+      role="listitem"
+    >
+      <span className="pointer-events-none text-gray-400 select-none min-w-[1.25rem] text-right font-medium" aria-hidden="true">
         {marker}
       </span>
       <RichTextBlock
@@ -27,6 +31,7 @@ export function ListBlock({
         ariaLabel="List item text"
         placeholder="List item"
         className="w-full text-base"
+        enterBehavior="newline"
         onSplitBlock={onSplitBlock}
         onMergeWithPrevious={onMergeWithPrevious}
         onOpenSlashMenu={onOpenSlashMenu}

@@ -13,6 +13,7 @@ import {
 } from './editor/contacts/pageCollaborators'
 import { loadWorkspaceAccessWorkspaces, publishWorkspaceAccessSnapshot } from './editor/contacts/workspaceAccess'
 import './app/workspace.css'
+import { syncWorkspacesFromNostr, saveWorkspacesToNostr } from './app/nostrConfig'
 
 function LoadingShell() {
   return (
@@ -133,6 +134,47 @@ function WorkspaceView({ workspace }: { workspace: Workspace }) {
     }
   }, [relayUrls, user?.pubkey])
 
+  useEffect(() => {
+    if (!user?.pubkey) return
+    let cancelled = false
+
+    void syncWorkspacesFromNostr(user.pubkey, relayUrls)
+      .then((payload) => {
+        if (cancelled || !payload) return
+
+        const localListRaw = localStorage.getItem('grid34_workspaces')
+        let merged = payload.workspaces
+        let changed = false
+        if (localListRaw) {
+          try {
+            const local = JSON.parse(localListRaw) as string[]
+            const beforeLen = local.length
+            const combined = Array.from(new Set([...local, ...payload.workspaces]))
+            if (combined.length !== beforeLen) {
+              merged = combined
+              changed = true
+            } else {
+              merged = local
+            }
+          } catch {}
+        } else {
+          changed = true
+        }
+
+        if (changed) {
+          localStorage.setItem('grid34_workspaces', JSON.stringify(merged))
+          window.location.reload()
+        }
+      })
+      .catch((err) => {
+        console.warn('Background workspaces config sync failed:', err)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [user?.pubkey, relayUrls])
+
   const workspaceOwnerPubkey = loadWorkspaceOwnerPubkey(workspace.repoId)
   const selectedPageCollaborators = selectedPageId ? loadPageCollaborators(workspace.repoId, selectedPageId) : []
   const canViewWorkspace =
@@ -211,16 +253,39 @@ function WorkspaceView({ workspace }: { workspace: Workspace }) {
       setUser(profile)
       sessionStorage.setItem('nostr_user', JSON.stringify(profile))
 
+      let activeRelays = ['wss://nos.lol', 'wss://relay.damus.io', 'wss://relay.nostr.band']
       if ((window as any).nostr.getRelays) {
         try {
           const relaysObj = await (window as any).nostr.getRelays()
           const userRelays = Object.keys(relaysObj)
           if (userRelays.length > 0) {
             sessionStorage.setItem('nostr_relays', JSON.stringify(userRelays))
+            activeRelays = Array.from(new Set([...userRelays, ...activeRelays]))
           }
         } catch (err) {
           console.warn('Failed to get relays from NIP-07 extension', err)
         }
+      }
+
+      // Sync settings list from Nostr
+      try {
+        const payload = await syncWorkspacesFromNostr(pubkey, activeRelays)
+        if (payload && Array.isArray(payload.workspaces)) {
+          const localListRaw = localStorage.getItem('grid34_workspaces')
+          let merged = payload.workspaces
+          if (localListRaw) {
+            try {
+              const local = JSON.parse(localListRaw) as string[]
+              merged = Array.from(new Set([...merged, ...local]))
+            } catch {}
+          }
+          localStorage.setItem('grid34_workspaces', JSON.stringify(merged))
+          if (payload.activeRepoId) {
+            localStorage.setItem('grid34_active_repo_id', payload.activeRepoId)
+          }
+        }
+      } catch (err) {
+        console.warn('Failed to sync settings from Nostr on login', err)
       }
 
       window.location.reload()
@@ -437,7 +502,7 @@ function WorkspaceSwitcher({
   const [showImport, setShowImport] = useState(false)
 
   useEffect(() => {
-    const list = sessionStorage.getItem('grid34_workspaces')
+    const list = localStorage.getItem('grid34_workspaces')
     if (list) {
       try {
         setWorkspaces(JSON.parse(list))
@@ -451,21 +516,102 @@ function WorkspaceSwitcher({
 
   const saveWorkspaces = (nextList: string[]) => {
     setWorkspaces(nextList)
-    sessionStorage.setItem('grid34_workspaces', JSON.stringify(nextList))
+    localStorage.setItem('grid34_workspaces', JSON.stringify(nextList))
   }
 
   const visibleWorkspaces = Array.from(new Set([...workspaces, ...accessibleWorkspaceIds]))
 
-  const handleSwitch = (repoId: string) => {
-    sessionStorage.setItem('grid34_active_repo_id', repoId)
+  const syncToNostr = async (nextList: string[], nextActiveId: string) => {
+    if (currentUserPubkey) {
+      await saveWorkspacesToNostr(currentUserPubkey, nextList, nextActiveId, relayUrls)
+    }
+  }
+
+  const handleSwitch = async (repoId: string) => {
+    localStorage.setItem('grid34_active_repo_id', repoId)
+    await syncToNostr(workspaces, repoId)
     window.location.reload()
   }
 
-  const handleCreate = () => {
+  const handleRename = async (oldId: string, newId: string) => {
+    const cleanNewId = newId.trim()
+    if (!cleanNewId || cleanNewId === oldId) return
+    if (cleanNewId === 'workspace-repo') {
+      alert('Cannot rename to the default workspace-repo')
+      return
+    }
+
+    const nextList = workspaces.map(w => w === oldId ? cleanNewId : w)
+    saveWorkspaces(nextList)
+
+    // 1. Gather all keys to migrate first to prevent index shift bugs
+    const prefixes = [
+      `grid34_state_${oldId}`,
+      `grid34_cek_${oldId}`,
+      `grid34_signing_key_${oldId}`,
+      `grid34_db_rows_${oldId}`,
+      `grid34_pages_${oldId}`,
+      `grid34_revisions_${oldId}`,
+      `grid34_workspace_owner_${oldId}`,
+      `grid34_page_collaborators_${oldId}_`
+    ]
+
+    const keysToMigrate: { oldKey: string; newKey: string }[] = []
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i)
+      if (!key) continue
+
+      for (const prefix of prefixes) {
+        if (key.startsWith(prefix)) {
+          let newKey = key
+          if (prefix === `grid34_page_collaborators_${oldId}_`) {
+            const suffix = key.substring(prefix.length)
+            newKey = `grid34_page_collaborators_${cleanNewId}_` + suffix
+          } else {
+            newKey = key.replace(oldId, cleanNewId)
+          }
+          keysToMigrate.push({ oldKey: key, newKey })
+          break
+        }
+      }
+    }
+
+    // 2. Perform the migration safely
+    for (const { oldKey, newKey } of keysToMigrate) {
+      const val = localStorage.getItem(oldKey)
+      if (val !== null) {
+        localStorage.setItem(newKey, val)
+        localStorage.removeItem(oldKey)
+      }
+    }
+
+    // 3. Update the user's accessible workspaces list
+    if (currentUserPubkey) {
+      const accessKey = `grid34_accessible_workspaces_${currentUserPubkey}`
+      const stored = localStorage.getItem(accessKey)
+      if (stored) {
+        try {
+          const list = JSON.parse(stored) as string[]
+          const updated = Array.from(new Set(list.map(w => w === oldId ? cleanNewId : w)))
+          localStorage.setItem(accessKey, JSON.stringify(updated))
+        } catch {}
+      }
+    }
+
+    const nextActiveId = activeRepoId === oldId ? cleanNewId : activeRepoId
+    if (activeRepoId === oldId) {
+      localStorage.setItem('grid34_active_repo_id', cleanNewId)
+    }
+    await syncToNostr(nextList, nextActiveId)
+    alert(`Workspace renamed to "${cleanNewId}"`)
+    window.location.reload()
+  }
+
+  const handleCreate = async () => {
     const randomId = 'repo-' + Math.random().toString(36).substring(2, 10)
     const nextList = Array.from(new Set([...workspaces, randomId]))
     saveWorkspaces(nextList)
-    sessionStorage.setItem('grid34_active_repo_id', randomId)
+    localStorage.setItem('grid34_active_repo_id', randomId)
     if (currentUserPubkey) {
       saveAccessibleWorkspace(currentUserPubkey, randomId)
       void publishWorkspaceAccessSnapshot(relayUrls, {
@@ -475,16 +621,17 @@ function WorkspaceSwitcher({
         updatedAt: Date.now(),
       })
     }
+    await syncToNostr(nextList, randomId)
     alert(`Created workspace "${randomId}". Switching...`)
     window.location.reload()
   }
 
-  const handleImport = () => {
+  const handleImport = async () => {
     const cleanId = newRepoId.trim()
     if (!cleanId) return
     const nextList = Array.from(new Set([...workspaces, cleanId]))
     saveWorkspaces(nextList)
-    sessionStorage.setItem('grid34_active_repo_id', cleanId)
+    localStorage.setItem('grid34_active_repo_id', cleanId)
     if (currentUserPubkey) {
       saveAccessibleWorkspace(currentUserPubkey, cleanId)
       void publishWorkspaceAccessSnapshot(relayUrls, {
@@ -494,6 +641,7 @@ function WorkspaceSwitcher({
         updatedAt: Date.now(),
       })
     }
+    await syncToNostr(nextList, cleanId)
     alert(`Imported workspace "${cleanId}". Switching...`)
     window.location.reload()
   }
@@ -505,25 +653,43 @@ function WorkspaceSwitcher({
           const isActive = id === activeRepoId
           return (
             <li key={id} className="list-none">
-              <button
-                type="button"
-                onClick={() => handleSwitch(id)}
-                className={`w-full text-left px-2 py-1.5 rounded-lg transition-colors flex items-center justify-between text-xs font-medium ${
+              <div
+                className={`group w-full rounded-lg transition-colors flex items-center justify-between text-xs font-medium ${
                   isActive
                     ? 'bg-gray-100 text-gray-900 font-semibold'
                     : 'text-gray-700 hover:bg-gray-50'
                 }`}
               >
-                <div className="flex items-center gap-2 min-w-0">
+                <button
+                  type="button"
+                  onClick={() => handleSwitch(id)}
+                  className="flex-1 text-left px-2 py-1.5 flex items-center gap-2 min-w-0"
+                >
                   <svg className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
                   </svg>
                   <span className="truncate font-mono text-[11px]">{id}</span>
+                </button>
+                <div className="flex items-center gap-1.5 flex-shrink-0 pr-1.5">
+                  <button
+                    type="button"
+                    title="Rename workspace"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      const newName = prompt("Rename workspace:", id)
+                      if (newName) handleRename(id, newName)
+                    }}
+                    className="opacity-44 hover:opacity-100 p-0.5 rounded hover:bg-gray-200 text-gray-500 hover:text-gray-800 transition-all"
+                  >
+                    <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                    </svg>
+                  </button>
+                  {isActive && (
+                    <span className="text-[10px] text-green-600 font-bold px-1" title="Active">✓</span>
+                  )}
                 </div>
-                {isActive && (
-                  <span className="text-[10px] text-green-600 font-bold px-1" title="Active">✓</span>
-                )}
-              </button>
+              </div>
             </li>
           )
         })}

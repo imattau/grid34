@@ -26,13 +26,23 @@ export function focusBlockEditor(blockId: string, moveCaret = true): boolean {
 export function restoreBlockEditorFocus(blockId: string, moveCaret = true): void {
   if (typeof window === 'undefined') return
 
-  const focus = () => {
-    focusBlockEditor(blockId, moveCaret)
+  const maxAttempts = 6
+
+  const schedule = (attempt: number) => {
+    const focus = () => {
+      if (focusBlockEditor(blockId, moveCaret) || attempt >= maxAttempts) {
+        return
+      }
+
+      schedule(attempt + 1)
+    }
+
+    if (typeof window.requestAnimationFrame === 'function') {
+      window.requestAnimationFrame(() => window.requestAnimationFrame(focus))
+    } else {
+      window.setTimeout(focus, 0)
+    }
   }
 
-  if (typeof window.requestAnimationFrame === 'function') {
-    window.requestAnimationFrame(() => window.requestAnimationFrame(focus))
-  } else {
-    window.setTimeout(focus, 0)
-  }
+  schedule(1)
 }

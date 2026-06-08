@@ -269,7 +269,7 @@ export async function createWorkspace(): Promise<Workspace> {
   db.run(CREATE_SCHEMA_SQL)
 
   const repoId =
-    (typeof window !== 'undefined' && sessionStorage.getItem('grid34_active_repo_id')) || 'workspace-repo'
+    (typeof window !== 'undefined' && localStorage.getItem('grid34_active_repo_id')) || 'workspace-repo'
   const stateKey = `grid34_state_${repoId}`
   const cekKey = `grid34_cek_${repoId}`
   const signingKey = `grid34_signing_key_${repoId}`
@@ -374,7 +374,7 @@ export async function createWorkspace(): Promise<Workspace> {
       return currentState.pages[pageId]
     },
     listPageRevisions(pageId: string): PageRevision[] {
-      return (revisionHistory[pageId] ?? []).map((revision) => ({
+      return (revisionHistory.pages[pageId] ?? []).map((revision) => ({
         ...revision,
         page: { ...revision.page, blocks: revision.page.blocks.map((block) => ({ ...block, content: { ...block.content } })) },
       }))
