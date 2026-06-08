@@ -6,6 +6,9 @@ import { ListBlock } from './ListBlock'
 import { DatabaseBlock } from './DatabaseBlock'
 import { DividerBlock } from './DividerBlock'
 import { ImageBlock } from './ImageBlock'
+import { TodoBlock } from './TodoBlock'
+import { CalloutBlock } from './CalloutBlock'
+import { CodeBlock } from './CodeBlock'
 
 describe('blockComponentRegistry', () => {
   it('maps each v1 BlockType to its component', () => {
@@ -15,5 +18,8 @@ describe('blockComponentRegistry', () => {
     expect(blockComponentRegistry.database).toBe(DatabaseBlock)
     expect(blockComponentRegistry.divider).toBe(DividerBlock)
     expect(blockComponentRegistry.image).toBe(ImageBlock)
+    expect(blockComponentRegistry.todo).toBe(TodoBlock)
+    expect(blockComponentRegistry.callout).toBe(CalloutBlock)
+    expect(blockComponentRegistry.code).toBe(CodeBlock)
   })
 })

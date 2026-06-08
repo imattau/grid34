@@ -18,6 +18,9 @@ export const SLASH_MENU_ITEMS: SlashMenuItem[] = [
   { label: 'Numbered list', type: 'list', description: 'Numbered list', icon: '1.', content: { kind: 'numbered' } },
   { label: 'Divider', type: 'divider', description: 'Visually divide sections', icon: '―', content: {} },
   { label: 'Image', type: 'image', description: 'NIP-44 encrypted image upload', icon: '🖼️', content: {} },
+  { label: 'To-do list', type: 'todo', description: 'Checkbox todo item', icon: '☑️', content: { checked: false } },
+  { label: 'Callout', type: 'callout', description: 'Highlight writing', icon: '💡', content: { emoji: '💡' } },
+  { label: 'Code sandbox', type: 'code', description: 'Code block with sandbox runner', icon: '💻', content: { code: '', language: 'javascript' } },
 ]
 
 interface SlashMenuProps {
