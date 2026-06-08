@@ -330,4 +330,18 @@ describe('DraftStore Page CRUD', () => {
     )
     expect(publisher.publishPatch).toHaveBeenCalledTimes(1)
   })
+
+  it('stages page move and publishes immediately', () => {
+    store.movePage('page-1', 'parent-2', 4.5)
+    expect(commitBuilder.buildPatchEventTemplate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        page: expect.objectContaining({
+          id: 'page-1',
+          parentId: 'parent-2',
+          order: 4.5,
+        }),
+      })
+    )
+    expect(publisher.publishPatch).toHaveBeenCalledTimes(1)
+  })
 })

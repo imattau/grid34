@@ -5,7 +5,7 @@ export function reduceRepo(initial: PageTreeState, patches: Patch[]): PageTreeSt
 
   for (const patch of patches) {
     const existing = pages[patch.pageId]
-    if (!existing || patch.createdAt >= existing.updatedAt) {
+    if (!existing || patch.page.updatedAt >= existing.updatedAt) {
       pages[patch.pageId] = patch.page
     }
   }

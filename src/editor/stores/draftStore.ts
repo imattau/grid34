@@ -29,6 +29,7 @@ export interface DraftStore {
   renamePage(pageId: string, title: string): void
   deletePage(pageId: string): void
   changePageIcon(pageId: string, icon: string): void
+  movePage(pageId: string, parentId: string | null, order: number): void
 }
 
 export interface CreateDraftStoreOptions {
@@ -230,6 +231,14 @@ export function createDraftStore(options: CreateDraftStoreOptions): DraftStore {
     }
   }
 
+  function movePage(pageId: string, parentId: string | null, order: number): void {
+    const page = repoStore.getPage(pageId)
+    if (page) {
+      const updatedPage = { ...page, parentId, order, updatedAt: Date.now() }
+      void publishPagePatch(updatedPage)
+    }
+  }
+
   return {
     stage,
     drafts$: draftsSubject.asObservable(),
@@ -238,5 +247,6 @@ export function createDraftStore(options: CreateDraftStoreOptions): DraftStore {
     renamePage,
     deletePage,
     changePageIcon,
+    movePage,
   }
 }

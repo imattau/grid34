@@ -1,6 +1,20 @@
 import { useEffect, useState, useRef } from 'react'
 import { useRepoStore, useDraftStore } from '../contexts/storeContexts'
 import type { Page, PageTreeState } from '../../storage/repo/types'
+import {
+  DndContext,
+  closestCenter,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core'
+import {
+  SortableContext,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
 
 export interface PageTreeProps {
   selectedPageId: string | null
@@ -36,6 +50,21 @@ function PageNode({
   const [editTitle, setEditTitle] = useState(page.title)
   const inputRef = useRef<HTMLInputElement>(null)
 
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: page.id })
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  }
+
   useEffect(() => {
     if (isEditing && inputRef.current) {
       inputRef.current.focus()
@@ -46,7 +75,6 @@ function PageNode({
   function handleCreateChild(e: React.MouseEvent) {
     e.stopPropagation()
     const newPageId = draftStore.createPage(page.id, 'Untitled')
-    // Auto-expand parent if collapsed
     if (isCollapsed) {
       onToggleCollapse(page.id)
     }
@@ -59,7 +87,6 @@ function PageNode({
     if (confirmDelete) {
       draftStore.deletePage(page.id)
       if (isSelected) {
-        // Navigate to parent page, or tree root
         if (page.parentId) {
           onSelectPage(page.parentId)
         } else {
@@ -96,14 +123,25 @@ function PageNode({
   const icon = page.icon || '📄'
 
   return (
-    <li className="list-none my-0.5">
+    <li ref={setNodeRef} style={style} className="list-none my-0.5">
       <div
         className={`group sidebar-page-item flex w-full items-center justify-between gap-1 px-2 cursor-pointer transition-colors relative ${
           isSelected ? 'bg-gray-150 border-gray-200 bg-gray-100 font-medium' : 'hover:bg-gray-50 text-gray-700'
         }`}
         onClick={() => onSelectPage(page.id)}
       >
-        <div className="flex items-center gap-1.5 min-w-0 flex-1">
+        <div className="flex items-center gap-1 min-w-0 flex-1">
+          {/* Drag handle */}
+          <span
+            {...attributes}
+            {...listeners}
+            onClick={(e) => e.stopPropagation()}
+            className="opacity-0 group-hover:opacity-100 cursor-grab active:cursor-grabbing p-0.5 text-gray-400 hover:text-gray-600 select-none text-[10px] flex-shrink-0"
+            title="Drag to reorder"
+          >
+            ⠿
+          </span>
+
           {/* Collapse toggle caret */}
           <button
             type="button"
@@ -182,19 +220,21 @@ function PageNode({
 
       {/* Children rendering */}
       {children.length > 0 && !isCollapsed && (
-        <ul className="pl-3.5 flex flex-col gap-0.5">
-          {children.map((child) => (
-            <PageNode
-              key={child.id}
-              page={child}
-              state={state}
-              selectedPageId={selectedPageId}
-              onSelectPage={onSelectPage}
-              collapsedMap={collapsedMap}
-              onToggleCollapse={onToggleCollapse}
-            />
-          ))}
-        </ul>
+        <SortableContext items={children.map((child) => child.id)} strategy={verticalListSortingStrategy}>
+          <ul className="pl-3.5 flex flex-col gap-0.5">
+            {children.map((child) => (
+              <PageNode
+                key={child.id}
+                page={child}
+                state={state}
+                selectedPageId={selectedPageId}
+                onSelectPage={onSelectPage}
+                collapsedMap={collapsedMap}
+                onToggleCollapse={onToggleCollapse}
+              />
+            ))}
+          </ul>
+        </SortableContext>
       )}
     </li>
   )
@@ -205,6 +245,14 @@ export function PageTree({ selectedPageId, onSelectPage }: PageTreeProps) {
   const draftStore = useDraftStore()
   const [state, setState] = useState<PageTreeState>({ pages: {} })
   const [collapsedMap, setCollapsedMap] = useState<Record<string, boolean>>({})
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 8,
+      },
+    })
+  )
 
   useEffect(() => {
     const subscription = repoStore.pageTree$.subscribe(setState)
@@ -223,34 +271,67 @@ export function PageTree({ selectedPageId, onSelectPage }: PageTreeProps) {
     onSelectPage(newPageId)
   }
 
+  function handleDragEnd(event: DragEndEvent) {
+    const { active, over } = event
+    if (!over || active.id === over.id) return
+
+    const activeId = active.id as string
+    const overId = over.id as string
+
+    const activePage = state.pages[activeId]
+    const overPage = state.pages[overId]
+    if (!activePage || !overPage) return
+
+    const newParentId = overPage.parentId
+    const siblings = childrenOf(state, newParentId).filter((p) => p.id !== activeId)
+    const overIndex = siblings.findIndex((p) => p.id === overId)
+
+    let newOrder = 0
+    if (siblings.length === 0) {
+      newOrder = 1.0
+    } else if (overIndex === 0) {
+      newOrder = siblings[0].order - 1.0
+    } else if (overIndex === -1 || overIndex === siblings.length - 1) {
+      newOrder = siblings[siblings.length - 1].order + 1.0
+    } else {
+      newOrder = (siblings[overIndex].order + siblings[overIndex + 1].order) / 2.0
+    }
+
+    draftStore.movePage(activeId, newParentId, newOrder)
+  }
+
   const roots = childrenOf(state, null)
 
   return (
-    <nav aria-label="Page tree" className="flex flex-col gap-2 w-full">
-      <ul className="list-none p-0 m-0 flex flex-col gap-0.5">
-        {roots.map((page) => (
-          <PageNode
-            key={page.id}
-            page={page}
-            state={state}
-            selectedPageId={selectedPageId}
-            onSelectPage={onSelectPage}
-            collapsedMap={collapsedMap}
-            onToggleCollapse={handleToggleCollapse}
-          />
-        ))}
-      </ul>
+    <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+      <nav aria-label="Page tree" className="flex flex-col gap-2 w-full">
+        <SortableContext items={roots.map((p) => p.id)} strategy={verticalListSortingStrategy}>
+          <ul className="list-none p-0 m-0 flex flex-col gap-0.5">
+            {roots.map((page) => (
+              <PageNode
+                key={page.id}
+                page={page}
+                state={state}
+                selectedPageId={selectedPageId}
+                onSelectPage={onSelectPage}
+                collapsedMap={collapsedMap}
+                onToggleCollapse={handleToggleCollapse}
+              />
+            ))}
+          </ul>
+        </SortableContext>
 
-      <button
-        type="button"
-        onClick={handleCreateRootPage}
-        className="sidebar-control sidebar-control--action"
-      >
-        <svg className="sidebar-control__icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-        </svg>
-        <span>Add a page</span>
-      </button>
-    </nav>
+        <button
+          type="button"
+          onClick={handleCreateRootPage}
+          className="sidebar-control sidebar-control--action"
+        >
+          <svg className="sidebar-control__icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+          </svg>
+          <span>Add a page</span>
+        </button>
+      </nav>
+    </DndContext>
   )
 }

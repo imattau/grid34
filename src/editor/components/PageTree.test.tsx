@@ -23,6 +23,7 @@ function renderTree(onSelect: (pageId: string | null) => void, selectedPageId: s
     createPage: vi.fn(() => 'new-page-id'),
     renamePage: vi.fn(),
     deletePage: vi.fn(),
+    movePage: vi.fn(),
   }
   return render(
     <RepoStoreContext.Provider value={repoStore as EditorRepoStore}>
