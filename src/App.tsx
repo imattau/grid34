@@ -144,6 +144,10 @@ function WorkspaceView({ workspace }: { workspace: Workspace }) {
                             <span>Connect Nostr (NIP-07)</span>
                           </button>
                         )}
+                        <div className="border-t border-gray-100 mt-1.5 pt-2 px-2 pb-1.5">
+                          <span className="text-[9px] font-bold text-gray-400 uppercase tracking-wider block mb-1.5 px-0.5">Workspace Key (CEK)</span>
+                          <CekKeysManager cek={workspace.cek} />
+                        </div>
                       </div>
                     </>
                   )}
@@ -156,12 +160,7 @@ function WorkspaceView({ workspace }: { workspace: Workspace }) {
                   <PageTree selectedPageId={selectedPageId} onSelectPage={setSelectedPageId} />
                 </div>
 
-                <div className="sidebar-section mt-4 border-t border-gray-150 pt-3.5">
-                  <div className="sidebar-section__header mb-1.5">
-                    <span>Encryption Key (CEK)</span>
-                  </div>
-                  <CekKeysManager cek={workspace.cek} />
-                </div>
+
 
                 <div className="sidebar-footer">
                   <button
