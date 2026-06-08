@@ -786,7 +786,8 @@ button {
   padding-left: 0.25rem !important;
 }
 
-.ProseMirror li[data-type="taskItem"] {
+/* Match any list item containing a checkbox and force flex alignment */
+.ProseMirror li:has(input[type="checkbox"]) {
   display: flex !important;
   flex-direction: row !important;
   align-items: flex-start !important;
@@ -794,9 +795,16 @@ button {
   margin-top: 0.25rem !important;
   margin-bottom: 0.25rem !important;
   list-style-type: none !important;
+  position: relative !important;
 }
 
-.ProseMirror li[data-type="taskItem"] > label {
+/* Hide Tailwind Typography custom bullet pseudo-elements for checklists */
+.ProseMirror li:has(input[type="checkbox"])::before {
+  content: none !important;
+  display: none !important;
+}
+
+.ProseMirror li:has(input[type="checkbox"]) > label {
   display: flex !important;
   align-items: center !important;
   justify-content: center !important;
@@ -805,7 +813,7 @@ button {
   flex-shrink: 0 !important;
 }
 
-.ProseMirror li[data-type="taskItem"] > label > input[type="checkbox"] {
+.ProseMirror li:has(input[type="checkbox"]) > label > input[type="checkbox"] {
   cursor: pointer !important;
   height: 1.1rem !important;
   width: 1.1rem !important;
@@ -814,18 +822,19 @@ button {
   margin: 0 !important;
 }
 
-.ProseMirror li[data-type="taskItem"] > div {
+.ProseMirror li:has(input[type="checkbox"]) > div {
   flex: 1 !important;
   min-width: 0 !important;
 }
 
-.ProseMirror li[data-type="taskItem"] > div > p {
+.ProseMirror li:has(input[type="checkbox"]) > div > p {
   margin: 0 !important;
 }
 
-.ProseMirror li[data-type="taskItem"][data-checked="true"] > div {
+.ProseMirror li:has(input[type="checkbox"])[data-checked="true"] > div {
   text-decoration: line-through !important;
   color: var(--color-muted) !important;
 }
+
 
 
