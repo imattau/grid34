@@ -4,7 +4,7 @@ import type { Page, PageTreeState } from '../../storage/repo/types'
 
 export interface PageTreeProps {
   selectedPageId: string | null
-  onSelectPage: (pageId: string) => void
+  onSelectPage: (pageId: string | null) => void
 }
 
 function childrenOf(state: PageTreeState, parentId: string | null): Page[] {
@@ -24,7 +24,7 @@ function PageNode({
   page: Page
   state: PageTreeState
   selectedPageId: string | null
-  onSelectPage: (pageId: string) => void
+  onSelectPage: (pageId: string | null) => void
   collapsedMap: Record<string, boolean>
   onToggleCollapse: (pageId: string) => void
 }) {
@@ -66,6 +66,8 @@ function PageNode({
           const roots = childrenOf(state, null).filter((r) => r.id !== page.id)
           if (roots.length > 0) {
             onSelectPage(roots[0].id)
+          } else {
+            onSelectPage(null)
           }
         }
       }
@@ -96,7 +98,7 @@ function PageNode({
   return (
     <li className="list-none my-0.5">
       <div
-        className={`group flex items-center justify-between gap-1 px-2 py-1 rounded-lg cursor-pointer transition-colors relative ${
+        className={`group sidebar-page-item flex w-full items-center justify-between gap-1 px-2 cursor-pointer transition-colors relative ${
           isSelected ? 'bg-gray-150 border-gray-200 bg-gray-100 font-medium' : 'hover:bg-gray-50 text-gray-700'
         }`}
         onClick={() => onSelectPage(page.id)}
@@ -153,10 +155,10 @@ function PageNode({
 
         {/* Hover-revealed actions (add child, delete) */}
         {!isEditing && (
-          <div className="opacity-0 group-hover:opacity-100 flex items-center gap-0.5 z-10 transition-opacity">
+          <div className="sidebar-page-item__actions opacity-0 group-hover:opacity-100 flex items-center justify-end gap-0.5 z-10 transition-opacity">
             <button
               type="button"
-              className="p-1 rounded hover:bg-gray-200 text-gray-500 hover:text-gray-900"
+              className="sidebar-page-action text-gray-500 hover:text-gray-900 hover:bg-gray-200"
               onClick={handleCreateChild}
               title="Add a page inside"
             >
@@ -166,7 +168,7 @@ function PageNode({
             </button>
             <button
               type="button"
-              className="p-1 rounded hover:bg-gray-200 text-gray-500 hover:text-red-600"
+              className="sidebar-page-action text-gray-500 hover:bg-gray-200 hover:text-red-600"
               onClick={handleDeletePage}
               title="Delete page"
             >
@@ -225,7 +227,7 @@ export function PageTree({ selectedPageId, onSelectPage }: PageTreeProps) {
 
   return (
     <nav aria-label="Page tree" className="flex flex-col gap-2 w-full">
-      <div className="flex flex-col gap-0.5">
+      <ul className="list-none p-0 m-0 flex flex-col gap-0.5">
         {roots.map((page) => (
           <PageNode
             key={page.id}
@@ -237,17 +239,17 @@ export function PageTree({ selectedPageId, onSelectPage }: PageTreeProps) {
             onToggleCollapse={handleToggleCollapse}
           />
         ))}
-      </div>
+      </ul>
 
       <button
         type="button"
         onClick={handleCreateRootPage}
-        className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs font-semibold text-gray-500 hover:text-gray-900 hover:bg-gray-200/50 transition-colors text-left"
+        className="sidebar-control sidebar-control--action"
       >
-        <svg className="w-3.5 h-3.5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <svg className="sidebar-control__icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
         </svg>
-        Add a page
+        <span>Add a page</span>
       </button>
     </nav>
   )

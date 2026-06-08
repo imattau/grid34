@@ -175,8 +175,8 @@ function bootstrapWorkspace(): DemoWorkspace {
     pageTree$: pageTreeSubject.asObservable(),
     observePage(pageId: string): Observable<{ status: 'loading' | 'ready' | 'locked'; page?: Page }> {
       const page = pages[pageId]
-      if (!page) {
-        return new BehaviorSubject({ status: 'locked' as const }).asObservable()
+      if (!page || page.deleted) {
+        return new BehaviorSubject({ status: 'locked' as const, page }).asObservable()
       }
 
       let subject = pageSubjects.get(pageId)

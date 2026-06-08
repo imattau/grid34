@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import App from './App'
 
 describe('App', () => {
@@ -18,5 +19,20 @@ describe('App', () => {
     expect(await screen.findByText(/Notes/i, { selector: 'span' }, { timeout: 10000 })).toBeInTheDocument()
     expect(await screen.findByLabelText(/Paragraph text/i, {}, { timeout: 10000 })).toBeInTheDocument()
     expect(await screen.findByRole('columnheader', { name: /name/i }, { timeout: 10000 })).toBeInTheDocument()
+  }, 30000)
+
+  it('clears the stored nostr user when signing out', async () => {
+    vi.useRealTimers()
+    localStorage.clear()
+    localStorage.setItem('nostr_user', JSON.stringify({ pubkey: 'pubkey-1', name: 'Alice', picture: 'https://example.com/avatar.png' }))
+
+    render(<App />)
+
+    const profileButton = await screen.findByRole('button', { name: /alice/i }, { timeout: 10000 })
+    await userEvent.click(profileButton)
+    await userEvent.click(await screen.findByRole('button', { name: /sign out of nostr/i }, { timeout: 10000 }))
+
+    expect(localStorage.getItem('nostr_user')).toBeNull()
+    expect(await screen.findByText('Guest User', { selector: 'span' }, { timeout: 10000 })).toBeInTheDocument()
   }, 30000)
 })

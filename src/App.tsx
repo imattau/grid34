@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { DbViewStoreContext, DraftStoreContext, RepoStoreContext } from './editor/contexts/storeContexts'
 import { PageEditor } from './editor/components/PageEditor'
 import { PageTree } from './editor/components/PageTree'
-import { createDemoWorkspace, type DemoWorkspace } from './app/demoWorkspace'
+import { createWorkspace, type Workspace } from './app/workspace'
 import './app/workspace.css'
 
 function LoadingShell() {
@@ -23,8 +23,8 @@ interface NostrProfile {
   picture: string
 }
 
-function WorkspaceView({ workspace }: { workspace: DemoWorkspace }) {
-  const [selectedPageId, setSelectedPageId] = useState(workspace.selectedPageId)
+function WorkspaceView({ workspace }: { workspace: Workspace }) {
+  const [selectedPageId, setSelectedPageId] = useState<string | null>(workspace.selectedPageId)
   const [user, setUser] = useState<NostrProfile | null>(null)
   const [showUserMenu, setShowUserMenu] = useState(false)
 
@@ -88,7 +88,7 @@ function WorkspaceView({ workspace }: { workspace: DemoWorkspace }) {
                   <button
                     type="button"
                     onClick={() => setShowUserMenu(!showUserMenu)}
-                    className="w-full flex items-center justify-between gap-2 p-1.5 rounded-lg hover:bg-gray-200/50 transition-colors text-left select-none cursor-pointer"
+                    className="sidebar-control sidebar-control--profile"
                   >
                     <div className="flex items-center gap-2 min-w-0">
                       <img
@@ -99,16 +99,16 @@ function WorkspaceView({ workspace }: { workspace: DemoWorkspace }) {
                           e.currentTarget.src = `https://robohash.org/guest.png?set=set4`
                         }}
                       />
-                      <div className="flex flex-col min-w-0">
+                      <div className="sidebar-control__label min-w-0">
                         <span className="text-xs font-semibold text-gray-800 truncate">
                           {user ? user.name : 'Guest User'}
                         </span>
-                        <span className="text-[10px] text-gray-400 font-mono truncate">
+                        <span className="sidebar-control__meta truncate">
                           {user ? `Workspace (npub...${user.pubkey.substring(0, 4)})` : 'Local Workspace'}
                         </span>
                       </div>
                     </div>
-                    <svg className="w-3 h-3 text-gray-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <svg className="sidebar-control__icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7" />
                     </svg>
                   </button>
@@ -124,9 +124,9 @@ function WorkspaceView({ workspace }: { workspace: DemoWorkspace }) {
                               handleLogout()
                               setShowUserMenu(false)
                             }}
-                            className="w-full text-left px-3 py-2 text-xs text-red-600 hover:bg-red-50 transition-colors font-medium flex items-center gap-1.5"
+                            className="sidebar-control sidebar-control--menuitem sidebar-control--danger"
                           >
-                            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <svg className="sidebar-control__icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
                             </svg>
                             Sign out of Nostr
@@ -138,9 +138,10 @@ function WorkspaceView({ workspace }: { workspace: DemoWorkspace }) {
                               handleLogin()
                               setShowUserMenu(false)
                             }}
-                            className="w-full text-left px-3 py-2 text-xs text-gray-700 hover:bg-gray-50 transition-colors font-medium flex items-center gap-1.5"
+                            className="sidebar-control sidebar-control--menuitem"
                           >
-                            <span className="text-yellow-500 text-[10px]">⚡</span> Connect Nostr (NIP-07)
+                            <span className="text-yellow-500 text-[10px] leading-none">⚡</span>
+                            <span>Connect Nostr (NIP-07)</span>
                           </button>
                         )}
                       </div>
@@ -158,13 +159,13 @@ function WorkspaceView({ workspace }: { workspace: DemoWorkspace }) {
                 <div className="sidebar-footer">
                   <button
                     type="button"
-                    className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs font-semibold text-gray-500 hover:text-gray-900 hover:bg-gray-200/50 transition-colors text-left"
+                    className="sidebar-control sidebar-control--action"
                     onClick={() => void workspace.flushDrafts()}
                   >
-                    <svg className="w-3.5 h-3.5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <svg className="sidebar-control__icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.21 8H18" />
                     </svg>
-                    Flush drafts
+                    <span>Flush drafts</span>
                   </button>
                 </div>
               </aside>
@@ -176,7 +177,15 @@ function WorkspaceView({ workspace }: { workspace: DemoWorkspace }) {
                 </div>
 
                 <div className="page-shell">
-                  <PageEditor pageId={selectedPageId} />
+                  {selectedPageId ? (
+                    <PageEditor pageId={selectedPageId} />
+                  ) : (
+                    <section className="locked-page" aria-label="Empty workspace">
+                      <p className="page-editor__breadcrumbs">Workspace</p>
+                      <h2>No page selected</h2>
+                      <p>Create a page from the sidebar to start editing.</p>
+                    </section>
+                  )}
                 </div>
               </section>
             </div>
@@ -188,13 +197,13 @@ function WorkspaceView({ workspace }: { workspace: DemoWorkspace }) {
 }
 
 export default function App() {
-  const [workspace, setWorkspace] = useState<DemoWorkspace | null>(null)
+  const [workspace, setWorkspace] = useState<Workspace | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     let disposed = false
 
-    void createDemoWorkspace()
+    void createWorkspace()
       .then((nextWorkspace) => {
         if (disposed) {
           nextWorkspace.destroy()

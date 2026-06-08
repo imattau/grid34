@@ -152,6 +152,25 @@ describe('DraftStore debounced checkpoint', () => {
     expect(latest).toEqual({})
   })
 
+  it('preserves staged blocks that do not already exist on the page', async () => {
+    store.stage('page-1', 'block-1', { text: 'split head' })
+    store.stage('page-1', 'block-2', { type: 'paragraph', order: 1, parentBlockId: null, text: 'split tail' })
+
+    await vi.advanceTimersByTimeAsync(1000)
+
+    expect(commitBuilder.buildPatchEventTemplate).toHaveBeenCalledTimes(1)
+    expect(commitBuilder.buildPatchEventTemplate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        page: expect.objectContaining({
+          blocks: [
+            expect.objectContaining({ id: 'block-1', content: { text: 'split head' } }),
+            expect.objectContaining({ id: 'block-2', type: 'paragraph', content: { text: 'split tail' } }),
+          ],
+        }),
+      })
+    )
+  })
+
   it('flush() triggers an immediate checkpoint bypassing the debounce', async () => {
     store.stage('page-1', 'block-1', { text: 'a' })
     await store.flush()

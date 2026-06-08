@@ -14,7 +14,7 @@ const treeState: PageTreeState = {
   },
 }
 
-function renderTree(onSelect: (pageId: string) => void) {
+function renderTree(onSelect: (pageId: string | null) => void, selectedPageId: string | null = null) {
   const repoStore: Partial<EditorRepoStore> = {
     pageTree$: of(treeState),
     observePage: vi.fn(),
@@ -27,7 +27,7 @@ function renderTree(onSelect: (pageId: string) => void) {
   return render(
     <RepoStoreContext.Provider value={repoStore as EditorRepoStore}>
       <DraftStoreContext.Provider value={draftStore as DraftStore}>
-        <PageTree onSelectPage={onSelect} selectedPageId={null} />
+        <PageTree onSelectPage={onSelect} selectedPageId={selectedPageId} />
       </DraftStoreContext.Provider>
     </RepoStoreContext.Provider>
   )
@@ -48,5 +48,16 @@ describe('PageTree', () => {
     await userEvent.click(screen.getByText('Child Page'))
 
     expect(onSelect).toHaveBeenCalledWith('page-2')
+  })
+
+  it('clears the selection when deleting the last selected root page', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const onSelect = vi.fn()
+    renderTree(onSelect, 'page-1')
+
+    await userEvent.click(screen.getAllByTitle('Delete page')[0])
+
+    expect(onSelect).toHaveBeenCalledWith(null)
+    confirmSpy.mockRestore()
   })
 })

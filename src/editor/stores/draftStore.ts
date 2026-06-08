@@ -88,10 +88,13 @@ export function createDraftStore(options: CreateDraftStoreOptions): DraftStore {
     const page = repoStore.getPage(pageId)
     if (!page) return
 
+    const draftByBlockId = new Map(draftEntriesForPage)
+    const existingBlockIds = new Set(page.blocks.map((block) => block.id))
+
     const updatedBlocks = page.blocks
       .map((block) => {
-        const draft = drafts[block.id]
-        if (draft && draft.pageId === pageId) {
+        const draft = draftByBlockId.get(block.id)
+        if (draft) {
           const { type, order, parentBlockId, deleted, ...content } = draft.content
           if (deleted === true) return null
           return {
@@ -106,7 +109,29 @@ export function createDraftStore(options: CreateDraftStoreOptions): DraftStore {
         return block
       })
       .filter((b): b is Block => b !== null)
-    const updatedPage: Page = { ...page, blocks: updatedBlocks, updatedAt: Date.now() }
+
+    const insertedBlocks = draftEntriesForPage
+      .filter(([blockId]) => !existingBlockIds.has(blockId))
+      .map(([blockId, draft]) => {
+        const { deleted, type, order, parentBlockId, ...content } = draft.content
+        if (deleted === true) return null
+
+        return {
+          id: blockId,
+          type: typeof type === 'string' ? type : 'paragraph',
+          parentBlockId: typeof parentBlockId === 'string' || parentBlockId === null ? parentBlockId : null,
+          order: typeof order === 'number' ? order : Date.now(),
+          content,
+          updatedAt: Date.now(),
+        } satisfies Block
+      })
+      .filter((block): block is Block => block !== null)
+
+    const updatedPage: Page = {
+      ...page,
+      blocks: [...updatedBlocks, ...insertedBlocks].sort((a, b) => a.order - b.order),
+      updatedAt: Date.now(),
+    }
 
     const template = commitBuilder.buildPatchEventTemplate({
       page: updatedPage,
