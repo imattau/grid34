@@ -28,7 +28,6 @@ export interface Workspace {
 }
 
 const WORKSPACE_STATE_KEY = 'grid34_workspace_state'
-const WORKSPACE_CEK_KEY = 'grid34_workspace_cek'
 const WORKSPACE_SIGNING_KEY = 'grid34_workspace_signing_key'
 const WORKSPACE_DB_ROWS_KEY = 'grid34_workspace_db_rows'
 const LEGACY_PAGES_KEY = 'grid34_pages'
@@ -59,8 +58,8 @@ function loadBytes(key: string, generator: () => Uint8Array): Uint8Array {
   return next
 }
 
-function loadInitialState(): PageTreeState {
-  const cached = localStorage.getItem(WORKSPACE_STATE_KEY)
+function loadInitialState(stateKey: string, legacyPagesKey: string, isDefaultRepo: boolean): PageTreeState {
+  const cached = localStorage.getItem(stateKey)
   if (cached) {
     try {
       return JSON.parse(cached) as PageTreeState
@@ -69,13 +68,17 @@ function loadInitialState(): PageTreeState {
     }
   }
 
-  const legacy = localStorage.getItem(LEGACY_PAGES_KEY)
+  const legacy = localStorage.getItem(legacyPagesKey)
   if (legacy) {
     try {
       return { pages: JSON.parse(legacy) as Record<string, Page> }
     } catch {
       // Ignore invalid legacy cache.
     }
+  }
+
+  if (!isDefaultRepo) {
+    return { pages: {} }
   }
 
   return {
@@ -138,14 +141,18 @@ function loadInitialState(): PageTreeState {
   }
 }
 
-function loadInitialDatabaseRows(): DatabaseRowsState {
-  const cached = localStorage.getItem(WORKSPACE_DB_ROWS_KEY)
+function loadInitialDatabaseRows(dbRowsKey: string, isDefaultRepo: boolean): DatabaseRowsState {
+  const cached = localStorage.getItem(dbRowsKey)
   if (cached) {
     try {
       return JSON.parse(cached) as DatabaseRowsState
     } catch {
       // Ignore invalid cache and rebuild from defaults.
     }
+  }
+
+  if (!isDefaultRepo) {
+    return {}
   }
 
   return {
@@ -156,13 +163,13 @@ function loadInitialDatabaseRows(): DatabaseRowsState {
   }
 }
 
-function persistState(state: PageTreeState): void {
-  localStorage.setItem(WORKSPACE_STATE_KEY, JSON.stringify(state))
-  localStorage.setItem(LEGACY_PAGES_KEY, JSON.stringify(state.pages))
+function persistState(state: PageTreeState, stateKey: string, legacyPagesKey: string): void {
+  localStorage.setItem(stateKey, JSON.stringify(state))
+  localStorage.setItem(legacyPagesKey, JSON.stringify(state.pages))
 }
 
-function persistDatabaseRows(rows: DatabaseRowsState): void {
-  localStorage.setItem(WORKSPACE_DB_ROWS_KEY, JSON.stringify(rows))
+function persistDatabaseRows(rows: DatabaseRowsState, dbRowsKey: string): void {
+  localStorage.setItem(dbRowsKey, JSON.stringify(rows))
 }
 
 function selectInitialPageId(state: PageTreeState): string | null {
@@ -173,7 +180,7 @@ function selectInitialPageId(state: PageTreeState): string | null {
   return (roots[0] ?? pages[0])?.id ?? null
 }
 
-function createLocalSigner() {
+function createLocalSigner(signingKey: string) {
   const nostr = (globalThis as typeof globalThis & { nostr?: { signEvent?: (template: EventTemplate) => Promise<NostrEvent> } }).nostr
   if (nostr?.signEvent) {
     return {
@@ -181,13 +188,13 @@ function createLocalSigner() {
     }
   }
 
-  const secretKey = loadBytes(WORKSPACE_SIGNING_KEY, () => generateSecretKey())
+  const secretKey = loadBytes(signingKey, () => generateSecretKey())
   return {
     signEvent: async (template: EventTemplate) => finalizeEvent(template, secretKey),
   }
 }
 
-function syncDatabaseViewRows(db: any, dbViewStore: DbViewStore, databaseRows: DatabaseRowsState, state: PageTreeState): void {
+function syncDatabaseViewRows(db: any, dbViewStore: DbViewStore, databaseRows: DatabaseRowsState, state: PageTreeState, dbRowsKey: string): void {
   const activeDatabaseIds = new Set<string>()
 
   for (const page of Object.values(state.pages)) {
@@ -224,7 +231,7 @@ function syncDatabaseViewRows(db: any, dbViewStore: DbViewStore, databaseRows: D
     dbViewStore.notifyChanged(databaseId)
   }
 
-  persistDatabaseRows(databaseRows)
+  persistDatabaseRows(databaseRows, dbRowsKey)
 }
 
 function createPageObservation(page: Page): { status: 'ready'; page: Page } {
@@ -236,17 +243,36 @@ export async function createWorkspace(): Promise<Workspace> {
   const db = new SQL.Database()
   db.run(CREATE_SCHEMA_SQL)
 
-  const cek = loadBytes(WORKSPACE_CEK_KEY, () => generateCEK())
-  const databaseRows = loadInitialDatabaseRows()
+  const repoId = (typeof window !== 'undefined' && localStorage.getItem('grid34_active_repo_id')) || 'workspace-repo'
+  const stateKey = `grid34_state_${repoId}`
+  const cekKey = `grid34_cek_${repoId}`
+  const signingKey = `grid34_signing_key_${repoId}`
+  const dbRowsKey = `grid34_db_rows_${repoId}`
+  const legacyPagesKey = `grid34_pages_${repoId}`
+
+  const cek = loadBytes(cekKey, () => generateCEK())
+  const databaseRows = loadInitialDatabaseRows(dbRowsKey, repoId === 'workspace-repo')
   const eventStore = new EventStore()
   eventStore.verifyEvent = undefined
-  const repoTag = '30617:workspace-repo'
-  const repoStoreBase = createRepoStore(eventStore as never, { repoId: 'workspace-repo' })
-  const stateSubject = new BehaviorSubject<PageTreeState>(loadInitialState())
+  const repoTag = `30617:${repoId}`
+  const repoStoreBase = createRepoStore(eventStore as never, { repoId })
+  const stateSubject = new BehaviorSubject<PageTreeState>(loadInitialState(stateKey, legacyPagesKey, repoId === 'workspace-repo'))
   const dbViewStore = createDbViewStore(db)
   const pool = new SimplePool({ enablePing: true, enableReconnect: true })
-  const relayUrls = ['wss://nos.lol', 'wss://relay.damus.io', 'wss://relay.nostr.band']
-  const signer = createLocalSigner()
+  const defaultRelays = ['wss://nos.lol', 'wss://relay.damus.io', 'wss://relay.nostr.band']
+  let relayUrls = defaultRelays
+  if (typeof window !== 'undefined') {
+    try {
+      const storedRelays = localStorage.getItem('nostr_relays')
+      if (storedRelays) {
+        const parsed = JSON.parse(storedRelays) as string[]
+        if (parsed && parsed.length > 0) {
+          relayUrls = Array.from(new Set([...parsed, ...defaultRelays]))
+        }
+      }
+    } catch {}
+  }
+  const signer = createLocalSigner(signingKey)
   const shouldConnectRelays = typeof window !== 'undefined' && !import.meta.env.VITEST
   let currentState = stateSubject.getValue()
   let destroyed = false
@@ -255,8 +281,8 @@ export async function createWorkspace(): Promise<Workspace> {
     currentState = nextState
     stateSubject.next(nextState)
     applyStateToIndex(db, nextState)
-    persistState(nextState)
-    syncDatabaseViewRows(db, dbViewStore, databaseRows, nextState)
+    persistState(nextState, stateKey, legacyPagesKey)
+    syncDatabaseViewRows(db, dbViewStore, databaseRows, nextState, dbRowsKey)
   }
 
   applyState(currentState)
@@ -333,7 +359,7 @@ export async function createWorkspace(): Promise<Workspace> {
       },
     },
     relayUrls,
-    repoId: 'workspace-repo',
+    repoId,
     cek,
     debounceMs: 250,
     retryBaseMs: 250,
@@ -370,6 +396,7 @@ export async function createWorkspace(): Promise<Workspace> {
     dbViewStore,
     selectedPageId: selectInitialPageId(currentState),
     cek,
+    repoId,
     flushDrafts: async () => {
       await draftStore.flush()
     },
