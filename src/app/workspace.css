@@ -778,3 +778,39 @@ button {
   margin-top: 0.25rem !important;
   margin-bottom: 0.25rem !important;
 }
+
+/* Tiptap Task List Styles */
+.ProseMirror ul[data-type="taskList"] {
+  list-style: none !important;
+  margin-left: 0 !important;
+  padding-left: 0.25rem !important;
+}
+
+.ProseMirror li[data-type="taskItem"] {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  margin-top: 0.25rem;
+  margin-bottom: 0.25rem;
+}
+
+.ProseMirror li[data-type="taskItem"] > label {
+  display: flex;
+  align-items: center;
+  user-select: none;
+  margin-top: 0.25rem;
+}
+
+.ProseMirror li[data-type="taskItem"] > label > input[type="checkbox"] {
+  cursor: pointer;
+  height: 1.1rem;
+  width: 1.1rem;
+  border-radius: 4px;
+  border: 1px solid var(--color-border-strong);
+}
+
+.ProseMirror li[data-type="taskItem"][data-checked="true"] > div {
+  text-decoration: line-through;
+  color: var(--color-muted);
+}
+

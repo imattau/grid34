@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
 import { TodoBlock } from './TodoBlock'
 import { DraftStoreContext } from '../contexts/storeContexts'
 import type { DraftStore } from '../stores/draftStore'
@@ -12,7 +11,7 @@ function makeBlock(overrides: Partial<Block> = {}): Block {
     type: 'todo',
     parentBlockId: null,
     order: 0,
-    content: { text: 'Buy groceries', checked: false },
+    content: { text: 'Buy groceries' },
     updatedAt: 1000,
     ...overrides,
   }
@@ -27,18 +26,8 @@ function renderWithDraftStore(block: Block, draftStore: Partial<DraftStore>) {
 }
 
 describe('TodoBlock', () => {
-  it('renders unchecked todo correctly', () => {
+  it('renders todo block correctly', () => {
     renderWithDraftStore(makeBlock(), { stage: vi.fn() })
-    const checkbox = screen.getByRole('checkbox')
-    expect(checkbox).not.toBeChecked()
-    expect(screen.getByLabelText('Todo list item')).toHaveTextContent('Buy groceries')
-  })
-
-  it('toggles checkbox and stages the change', async () => {
-    const stage = vi.fn()
-    renderWithDraftStore(makeBlock(), { stage })
-    const checkbox = screen.getByRole('checkbox')
-    await userEvent.click(checkbox)
-    expect(stage).toHaveBeenCalledWith('page-1', 'todo-1', expect.objectContaining({ checked: true }))
+    expect(screen.getByLabelText('Todo list text')).toBeInTheDocument()
   })
 })

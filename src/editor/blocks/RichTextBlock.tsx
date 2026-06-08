@@ -6,6 +6,9 @@ import type { Block } from '../../storage/repo/types'
 import { serializeRichTextContent, shouldApplyIncomingRichTextContent } from './richTextSync'
 import { shouldSplitRichTextBlockOnEnter, type RichTextEnterBehavior } from './richTextEnterBehavior'
 
+import TaskList from '@tiptap/extension-task-list'
+import TaskItem from '@tiptap/extension-task-item'
+
 export interface RichTextBlockProps {
   block: Block
   pageId: string
@@ -31,17 +34,28 @@ export function RichTextBlock({
 }: RichTextBlockProps) {
   const draftStore = useDraftStore()
   const isApplyingExternalChangeRef = useRef(false)
-  const isListBlock = block.type === 'list'
+  const isListBlock = block.type === 'list' || block.type === 'todo'
   let initialContent = block.content.richText || (block.content.text as string) || ''
   if (isListBlock) {
-    const kind = block.content.kind === 'numbered' ? 'numbered' : 'bullet'
-    const tag = kind === 'numbered' ? 'ol' : 'ul'
-    if (typeof initialContent === 'string') {
-      const trimmed = initialContent.trim()
-      if (!trimmed) {
-        initialContent = `<${tag}><li></li></${tag}>`
-      } else if (!trimmed.startsWith(`<${tag}>`)) {
-        initialContent = `<${tag}><li>${trimmed}</li></${tag}>`
+    if (block.type === 'todo') {
+      if (typeof initialContent === 'string') {
+        const trimmed = initialContent.trim()
+        if (!trimmed) {
+          initialContent = '<ul data-type="taskList"><li data-type="taskItem" data-checked="false"></li></ul>'
+        } else if (!trimmed.startsWith('<ul data-type="taskList">')) {
+          initialContent = `<ul data-type="taskList"><li data-type="taskItem" data-checked="false">${trimmed}</li></ul>`
+        }
+      }
+    } else {
+      const kind = block.content.kind === 'numbered' ? 'numbered' : 'bullet'
+      const tag = kind === 'numbered' ? 'ol' : 'ul'
+      if (typeof initialContent === 'string') {
+        const trimmed = initialContent.trim()
+        if (!trimmed) {
+          initialContent = `<${tag}><li></li></${tag}>`
+        } else if (!trimmed.startsWith(`<${tag}>`)) {
+          initialContent = `<${tag}><li>${trimmed}</li></${tag}>`
+        }
       }
     }
   }
@@ -60,10 +74,14 @@ export function RichTextBlock({
     starterKitOptions.listItem = false
   }
 
+  const extensions = [StarterKit.configure(starterKitOptions)]
+  if (block.type === 'todo') {
+    extensions.push(TaskList)
+    extensions.push(TaskItem.configure({ nested: true }))
+  }
+
   const editor = useEditor({
-    extensions: [
-      StarterKit.configure(starterKitOptions),
-    ],
+    extensions,
     content: initialContent,
     editorProps: {
       attributes: {
@@ -163,14 +181,25 @@ export function RichTextBlock({
 
     let incomingContent = block.content.richText || (block.content.text as string) || ''
     if (isListBlock) {
-      const kind = block.content.kind === 'numbered' ? 'numbered' : 'bullet'
-      const tag = kind === 'numbered' ? 'ol' : 'ul'
-      if (typeof incomingContent === 'string') {
-        const trimmed = incomingContent.trim()
-        if (!trimmed) {
-          incomingContent = `<${tag}><li></li></${tag}>`
-        } else if (!trimmed.startsWith(`<${tag}>`)) {
-          incomingContent = `<${tag}><li>${trimmed}</li></${tag}>`
+      if (block.type === 'todo') {
+        if (typeof incomingContent === 'string') {
+          const trimmed = incomingContent.trim()
+          if (!trimmed) {
+            incomingContent = '<ul data-type="taskList"><li data-type="taskItem" data-checked="false"></li></ul>'
+          } else if (!trimmed.startsWith('<ul data-type="taskList">')) {
+            incomingContent = `<ul data-type="taskList"><li data-type="taskItem" data-checked="false">${trimmed}</li></ul>`
+          }
+        }
+      } else {
+        const kind = block.content.kind === 'numbered' ? 'numbered' : 'bullet'
+        const tag = kind === 'numbered' ? 'ol' : 'ul'
+        if (typeof incomingContent === 'string') {
+          const trimmed = incomingContent.trim()
+          if (!trimmed) {
+            incomingContent = `<${tag}><li></li></${tag}>`
+          } else if (!trimmed.startsWith(`<${tag}>`)) {
+            incomingContent = `<${tag}><li>${trimmed}</li></${tag}>`
+          }
         }
       }
     }
