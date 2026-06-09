@@ -5,21 +5,21 @@ import type { PeerInfo } from '../types'
 
 const PEER_INFO_EVENT_KIND = 20001
 
-function hasTag(event: NostrEvent, name: string, value: string): boolean {
-  return event.tags.some((tag) => tag[0] === name && tag[1] === value)
-}
-
 function normalizePeerInfo(peerInfo: PeerInfo): PeerInfo | null {
   if (typeof peerInfo.pubkey !== 'string' || peerInfo.pubkey.trim().length === 0) return null
   if (typeof peerInfo.peerId !== 'string' || peerInfo.peerId.trim().length === 0) return null
   if (!Array.isArray(peerInfo.multiaddrs) || peerInfo.multiaddrs.some((multiaddr) => typeof multiaddr !== 'string')) return null
   if (typeof peerInfo.updatedAt !== 'number' || Number.isNaN(peerInfo.updatedAt)) return null
+  if (peerInfo.workspaceId !== undefined && (typeof peerInfo.workspaceId !== 'string' || peerInfo.workspaceId.trim().length === 0)) {
+    return null
+  }
 
   return {
     pubkey: peerInfo.pubkey,
     peerId: peerInfo.peerId,
     multiaddrs: Array.from(new Set(peerInfo.multiaddrs.filter((multiaddr) => multiaddr.trim().length > 0))),
     updatedAt: peerInfo.updatedAt,
+    workspaceId: peerInfo.workspaceId,
   }
 }
 
@@ -78,8 +78,7 @@ export function createDiscoveryBridge(options: DiscoveryBridgeOptions): Discover
 
   eventStore.subscribeEphemeral((event) => {
     if (event.kind !== PEER_INFO_EVENT_KIND) return
-    if (scopedWorkspaceId && !hasTag(event, 'workspace', scopedWorkspaceId)) return
-    if (!event.pubkey || !hasTag(event, 'p', selfPubkey)) return
+    if (!event.pubkey) return
 
     const peerInfo = decryptPeerInfo(event.content, secretKey, event.pubkey)
     if (peerInfo === null) {
@@ -89,6 +88,10 @@ export function createDiscoveryBridge(options: DiscoveryBridgeOptions): Discover
 
     if (peerInfo.pubkey !== event.pubkey) {
       console.warn('[DiscoveryBridge] skipping mismatched PeerInfo pubkey', event.id)
+      return
+    }
+
+    if (scopedWorkspaceId && peerInfo.workspaceId !== scopedWorkspaceId) {
       return
     }
 
@@ -111,17 +114,14 @@ export function createDiscoveryBridge(options: DiscoveryBridgeOptions): Discover
       }
 
       const collaboratorPubkeys = await collaboratorList.getCollaboratorPubkeys(requestedWorkspaceId)
-      const peerInfo: PeerInfo = { pubkey: selfPubkey, peerId, multiaddrs, updatedAt: Date.now() }
+      const peerInfo: PeerInfo = { pubkey: selfPubkey, peerId, multiaddrs, updatedAt: Date.now(), workspaceId: requestedWorkspaceId }
 
       for (const recipientPubkey of collaboratorPubkeys) {
         const ciphertext = encryptPeerInfo(peerInfo, secretKey, recipientPubkey)
         const template: EventTemplate = {
           kind: PEER_INFO_EVENT_KIND,
           created_at: Math.floor(Date.now() / 1000),
-          tags: [
-            ['p', recipientPubkey],
-            ['workspace', requestedWorkspaceId],
-          ],
+          tags: [],
           content: ciphertext,
         }
         await publisher.publish(template)

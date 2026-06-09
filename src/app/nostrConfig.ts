@@ -16,29 +16,36 @@ export async function syncWorkspacesFromNostr(
 
   try {
     const pool = new SimplePool({ enablePing: true, enableReconnect: true })
-    const filter = {
+    const events = await pool.querySync(relays, {
       kinds: [30078],
       authors: [pubkey],
-      '#d': ['grid34_workspaces_config'],
-    }
-    const event = await pool.get(relays, filter)
+    })
     pool.close(relays)
 
-    if (event && event.content) {
+    let latest: WorkspacesConfigPayload | null = null
+    for (const event of events) {
+      if (!event.content) continue
+
       const decrypted = await (window as any).nostr.nip04.decrypt(pubkey, event.content)
       const data = JSON.parse(decrypted) as WorkspacesConfigPayload
-      if (data && Array.isArray(data.workspaces)) {
-        // Sync encrypted CEK keys back to localStorage if not present locally
-        if (data.ceks) {
-          for (const [repoId, cekJson] of Object.entries(data.ceks)) {
-            const localKey = `grid34_cek_${repoId}`
-            if (!localStorage.getItem(localKey)) {
-              localStorage.setItem(localKey, cekJson)
-            }
+      if (!data || !Array.isArray(data.workspaces)) continue
+
+      if (!latest || data.updatedAt >= latest.updatedAt) {
+        latest = data
+      }
+    }
+
+    if (latest) {
+      // Sync encrypted CEK keys back to localStorage if not present locally
+      if (latest.ceks) {
+        for (const [repoId, cekJson] of Object.entries(latest.ceks)) {
+          const localKey = `grid34_cek_${repoId}`
+          if (!localStorage.getItem(localKey)) {
+            localStorage.setItem(localKey, cekJson)
           }
         }
-        return data
       }
+      return latest
     }
   } catch (err) {
     console.warn('Failed to load workspaces config from Nostr:', err)
@@ -77,7 +84,7 @@ export async function saveWorkspacesToNostr(
     const template = {
       kind: 30078,
       created_at: Math.floor(Date.now() / 1000),
-      tags: [['d', 'grid34_workspaces_config']],
+      tags: [],
       content: encrypted,
     }
     const signed = await (window as any).nostr.signEvent(template)

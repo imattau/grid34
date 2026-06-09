@@ -16,34 +16,86 @@ function uniqueRelayUrls(relayUrls: string[]): string[] {
   return Array.from(new Set(relayUrls.filter((relay) => relay.trim().length > 0)))
 }
 
+function normalizeWorkspaceAccessSnapshot(content: Partial<WorkspaceAccessSnapshot>, event: NostrEvent): WorkspaceAccessSnapshot | null {
+  if (typeof content.workspaceId !== 'string' || content.workspaceId.trim().length === 0) {
+    return null
+  }
+
+  const collaboratorPubkeys = Array.isArray(content.collaboratorPubkeys)
+    ? Array.from(
+        new Set(content.collaboratorPubkeys.filter((value) => typeof value === 'string' && value.trim().length > 0))
+      )
+    : []
+
+  return {
+    workspaceId: content.workspaceId,
+    pageId: typeof content.pageId === 'string' && content.pageId.trim().length > 0 ? content.pageId : undefined,
+    collaboratorPubkeys,
+    ownerPubkey: typeof content.ownerPubkey === 'string' && content.ownerPubkey.trim().length > 0 ? content.ownerPubkey : undefined,
+    updatedAt: typeof content.updatedAt === 'number' ? content.updatedAt : event.created_at * 1000,
+    revoked: content.revoked === true,
+  }
+}
+
 function parseWorkspaceAccessSnapshot(event: NostrEvent): WorkspaceAccessSnapshot | null {
   try {
-    const content = JSON.parse(event.content) as Partial<WorkspaceAccessSnapshot>
-    if (typeof content.workspaceId !== 'string' || content.workspaceId.trim().length === 0) {
-      return null
-    }
-
-    const collaboratorPubkeys = Array.isArray(content.collaboratorPubkeys)
-      ? Array.from(
-          new Set(content.collaboratorPubkeys.filter((value) => typeof value === 'string' && value.trim().length > 0))
-        )
-      : []
-
-    return {
-      workspaceId: content.workspaceId,
-      pageId: typeof content.pageId === 'string' && content.pageId.trim().length > 0 ? content.pageId : undefined,
-      collaboratorPubkeys,
-      ownerPubkey: typeof content.ownerPubkey === 'string' && content.ownerPubkey.trim().length > 0 ? content.ownerPubkey : undefined,
-      updatedAt: typeof content.updatedAt === 'number' ? content.updatedAt : event.created_at * 1000,
-      revoked: content.revoked === true,
-    }
+    return normalizeWorkspaceAccessSnapshot(JSON.parse(event.content) as Partial<WorkspaceAccessSnapshot>, event)
   } catch {
     return null
   }
 }
 
-function getNostrApi(): { signEvent?: (template: EventTemplate) => Promise<NostrEvent> } | undefined {
-  return (globalThis as typeof globalThis & { nostr?: { signEvent?: (template: EventTemplate) => Promise<NostrEvent> } }).nostr
+type NostrBrowserApi = {
+  signEvent?: (template: EventTemplate) => Promise<NostrEvent>
+  nip04?: {
+    encrypt?: (pubkey: string, plaintext: string) => Promise<string>
+    decrypt?: (pubkey: string, ciphertext: string) => Promise<string>
+  }
+}
+
+function getNostrApi(): NostrBrowserApi | undefined {
+  return (globalThis as typeof globalThis & { nostr?: NostrBrowserApi }).nostr
+}
+
+function uniqueRecipients(snapshot: WorkspaceAccessSnapshot): string[] {
+  return Array.from(
+    new Set(
+      [
+        snapshot.ownerPubkey,
+        ...snapshot.collaboratorPubkeys,
+      ].filter((value): value is string => typeof value === 'string' && value.trim().length > 0))
+  )
+}
+
+async function encodeWorkspaceAccessSnapshot(
+  recipientPubkey: string,
+  snapshot: WorkspaceAccessSnapshot
+): Promise<string | null> {
+  const nostr = getNostrApi()
+  if (!nostr?.nip04?.encrypt) return null
+
+  try {
+    return await nostr.nip04.encrypt(recipientPubkey, JSON.stringify(snapshot))
+  } catch (error) {
+    console.warn('[WorkspaceAccess] failed to encrypt snapshot payload', error)
+    return null
+  }
+}
+
+async function decodeWorkspaceAccessSnapshot(event: NostrEvent, recipientPubkey: string): Promise<WorkspaceAccessSnapshot | null> {
+  const nostr = getNostrApi()
+  if (nostr?.nip04?.decrypt) {
+    try {
+      const decrypted = await nostr.nip04.decrypt(recipientPubkey, event.content)
+      const parsed = JSON.parse(decrypted) as Partial<WorkspaceAccessSnapshot>
+      const normalized = normalizeWorkspaceAccessSnapshot(parsed, event)
+      if (normalized) return normalized
+    } catch {
+      // Fall back to the legacy plaintext format below.
+    }
+  }
+
+  return parseWorkspaceAccessSnapshot(event)
 }
 
 export async function publishWorkspaceAccessSnapshot(
@@ -51,7 +103,7 @@ export async function publishWorkspaceAccessSnapshot(
   snapshot: WorkspaceAccessSnapshot
 ): Promise<NostrEvent | null> {
   const nostr = getNostrApi()
-  if (!nostr?.signEvent) return null
+  if (!nostr?.signEvent || !nostr.nip04?.encrypt) return null
 
   const relays = uniqueRelayUrls(relayUrls)
   if (relays.length === 0) return null
@@ -62,22 +114,31 @@ export async function publishWorkspaceAccessSnapshot(
     revoked: snapshot.revoked === true,
   }
 
-  const template: EventTemplate = {
-    kind: WORKSPACE_ACCESS_EVENT_KIND,
-    created_at: Math.floor(Date.now() / 1000),
-    tags: [
-      ['workspace', snapshot.workspaceId],
-      ...(snapshot.pageId ? [['page', snapshot.pageId] as [string, string]] : []),
-      ...contentSnapshot.collaboratorPubkeys.map((pubkey) => ['p', pubkey] as [string, string]),
-    ],
-    content: JSON.stringify(contentSnapshot),
-  }
-
-  const signed = await nostr.signEvent(template)
   const pool = new SimplePool({ enablePing: true, enableReconnect: true })
   try {
-    await Promise.all(pool.publish(relays, signed))
-    return signed
+    const recipients = uniqueRecipients(contentSnapshot)
+    const signedEvents: NostrEvent[] = []
+
+    for (const recipientPubkey of recipients) {
+      const encryptedContent = await encodeWorkspaceAccessSnapshot(recipientPubkey, contentSnapshot)
+      if (!encryptedContent) continue
+
+      const template: EventTemplate = {
+        kind: WORKSPACE_ACCESS_EVENT_KIND,
+        created_at: Math.floor(Date.now() / 1000),
+        tags: [],
+        content: encryptedContent,
+      }
+
+      const signed = await nostr.signEvent(template)
+      signedEvents.push(signed)
+    }
+
+    if (signedEvents.length === 0) return null
+    for (const signed of signedEvents) {
+      await Promise.all(pool.publish(relays, signed))
+    }
+    return signedEvents[0] ?? null
   } finally {
     pool.close(relays)
   }
@@ -93,14 +154,13 @@ export async function loadWorkspaceAccessSnapshots(pubkey: string, relayUrls: st
       relays,
       {
         kinds: [WORKSPACE_ACCESS_EVENT_KIND],
-        '#p': [pubkey],
       },
       { maxWait: 4000 }
     )
 
     const snapshots = new Map<string, { createdAt: number; snapshot: WorkspaceAccessSnapshot }>()
     for (const event of events) {
-      const snapshot = parseWorkspaceAccessSnapshot(event)
+      const snapshot = await decodeWorkspaceAccessSnapshot(event, pubkey)
       if (!snapshot) continue
 
       const existing = snapshots.get(snapshot.workspaceId)

@@ -7,6 +7,7 @@ export interface PeerInfo {
   peerId: string
   multiaddrs: string[]
   updatedAt: number
+  workspaceId?: string
 }
 
 /**

@@ -16,6 +16,7 @@ describe('PeerInfo encrypt/decrypt', () => {
       peerId: '12D3KooWAbc123',
       multiaddrs: ['/ip4/127.0.0.1/tcp/4001'],
       updatedAt: 1000,
+      workspaceId: 'workspace-1',
     }
 
     const ciphertext = encryptPeerInfo(peerInfo, senderSk, recipientPk)
@@ -76,8 +77,7 @@ describe('createDiscoveryBridge', () => {
     expect(published).toHaveLength(2)
     for (const template of published) {
       expect(template.kind).toBe(20001)
-      expect(template.tags).toContainEqual(['p', expect.any(String)])
-      expect(template.tags).toContainEqual(['workspace', 'workspace-1'])
+      expect(template.tags).toEqual([])
     }
   })
 
@@ -92,8 +92,10 @@ describe('createDiscoveryBridge', () => {
       peerId: 'peer-A',
       multiaddrs: ['/ip4/10.0.0.1/tcp/4001'],
       updatedAt: 2000,
+      workspaceId: 'workspace-1',
     }
     const ciphertext = encryptPeerInfo(peerInfo, senderSk, selfPk)
+    const wrongWorkspaceCiphertext = encryptPeerInfo({ ...peerInfo, workspaceId: 'workspace-2' }, senderSk, selfPk)
 
     let handler: ((event: NostrEvent) => void) | undefined
     const bridge = createDiscoveryBridge({
@@ -118,7 +120,7 @@ describe('createDiscoveryBridge', () => {
       created_at: 2000,
       pubkey: senderPk,
       sig: 'sig',
-      tags: [['p', selfPk], ['workspace', 'workspace-1']],
+      tags: [],
       content: ciphertext,
     })
     handler!({
@@ -127,7 +129,7 @@ describe('createDiscoveryBridge', () => {
       created_at: 2001,
       pubkey: senderPk,
       sig: 'sig',
-      tags: [['p', selfPk], ['workspace', 'workspace-1']],
+      tags: [],
       content: 'not-decryptable-garbage',
     })
 
@@ -146,8 +148,10 @@ describe('createDiscoveryBridge', () => {
       peerId: 'peer-A',
       multiaddrs: ['/ip4/10.0.0.1/tcp/4001'],
       updatedAt: 2000,
+      workspaceId: 'workspace-1',
     }
     const ciphertext = encryptPeerInfo(peerInfo, senderSk, selfPk)
+    const wrongWorkspaceCiphertext = encryptPeerInfo({ ...peerInfo, workspaceId: 'workspace-2' }, senderSk, selfPk)
 
     let handler: ((event: NostrEvent) => void) | undefined
     const bridge = createDiscoveryBridge({
@@ -172,8 +176,8 @@ describe('createDiscoveryBridge', () => {
       created_at: 2000,
       pubkey: senderPk,
       sig: 'sig',
-      tags: [['p', selfPk], ['workspace', 'workspace-2']],
-      content: ciphertext,
+      tags: [],
+      content: wrongWorkspaceCiphertext,
     })
 
     expect(emissions.at(-1)).toEqual({})
@@ -184,7 +188,7 @@ describe('createDiscoveryBridge', () => {
       created_at: 2001,
       pubkey: wrongSenderPk,
       sig: 'sig',
-      tags: [['p', selfPk], ['workspace', 'workspace-1']],
+      tags: [],
       content: ciphertext,
     })
 
