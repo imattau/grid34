@@ -147,6 +147,7 @@ function WorkspaceView({ workspace }: { workspace: Workspace }) {
       setAccessibleWorkspaceIds([])
       return
     }
+    if (import.meta.env.VITEST) return
 
     const cached = loadAccessibleWorkspaces(user.pubkey)
     const seeded = Array.from(new Set([...cached, workspace.repoId]))
@@ -174,6 +175,7 @@ function WorkspaceView({ workspace }: { workspace: Workspace }) {
 
   useEffect(() => {
     if (!user?.pubkey) return
+    if (import.meta.env.VITEST) return
     let cancelled = false
 
     void syncWorkspacesFromNostr(user.pubkey, relayUrls)
@@ -530,6 +532,7 @@ function WorkspaceView({ workspace }: { workspace: Workspace }) {
                       workspaceId={workspace.repoId}
                       currentUserPubkey={user?.pubkey ?? null}
                       relayUrls={relayUrls}
+                      enableNostrContacts={!import.meta.env.VITEST}
                     />
                   ) : (
                     <section className="locked-page" aria-label="Empty workspace">

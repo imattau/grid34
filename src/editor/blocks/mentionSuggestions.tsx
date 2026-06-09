@@ -1,6 +1,31 @@
 import { ReactRenderer } from '@tiptap/react'
 import React, { forwardRef, useImperativeHandle, useState, useEffect } from 'react'
-import { getCachedContacts, type NostrContact } from '../contacts/nostrContacts'
+import {
+  getCachedContacts,
+  getCachedMentionContacts,
+  type NostrContact,
+  type CachedMentionContact,
+} from '../contacts/nostrContacts'
+
+const MAX_MENTION_RESULTS = 8
+
+function getMentionContactsForSearch(): CachedMentionContact[] {
+  const indexed = getCachedMentionContacts()
+  if (indexed.length > 0) return indexed
+
+  return getCachedContacts().map((contact) => ({
+    contact,
+    searchText: [
+      contact.petname,
+      contact.displayName,
+      contact.name,
+      contact.pubkey,
+    ]
+      .filter((value): value is string => typeof value === 'string' && value.length > 0)
+      .join(' ')
+      .toLowerCase(),
+  }))
+}
 
 export interface MentionListProps {
   items: NostrContact[]
@@ -36,6 +61,10 @@ export const MentionList = forwardRef((props: MentionListProps, ref) => {
 
   useImperativeHandle(ref, () => ({
     onKeyDown: ({ event }: { event: KeyboardEvent }) => {
+      if (!props.items.length) {
+        return event.key === 'Escape'
+      }
+
       if (event.key === 'ArrowUp') {
         upHandler()
         return true
@@ -78,6 +107,8 @@ export const MentionList = forwardRef((props: MentionListProps, ref) => {
             <img
               src={picture}
               alt=""
+              loading="lazy"
+              decoding="async"
               className="h-6 w-6 rounded-full border border-gray-200 object-cover"
               onError={(e) => {
                 e.currentTarget.src = `https://robohash.org/${item.pubkey}.png?set=set4`
@@ -102,30 +133,12 @@ MentionList.displayName = 'MentionList'
 
 export const mentionSuggestionConfig = {
   items: ({ query }: { query: string }): NostrContact[] => {
-    const contacts = getCachedContacts()
-    if (contacts.length === 0) {
-      // Return a temporary placeholder contact so the popup is triggered and informs the user
-      return [
-        {
-          pubkey: '',
-          name: 'No contacts loaded',
-          displayName: 'Connect Nostr or wait to sync profiles',
-        },
-      ]
-    }
+    const contacts = getMentionContactsForSearch()
+    if (contacts.length === 0) return []
+
     const lowercaseQuery = query.toLowerCase()
-    return contacts.filter((contact) => {
-      const petname = contact.petname?.toLowerCase() || ''
-      const displayName = contact.displayName?.toLowerCase() || ''
-      const name = contact.name?.toLowerCase() || ''
-      const pubkey = contact.pubkey.toLowerCase()
-      return (
-        petname.includes(lowercaseQuery) ||
-        displayName.includes(lowercaseQuery) ||
-        name.includes(lowercaseQuery) ||
-        pubkey.includes(lowercaseQuery)
-      )
-    })
+    const filtered = contacts.filter((entry) => entry.searchText.includes(lowercaseQuery))
+    return filtered.slice(0, MAX_MENTION_RESULTS).map((entry) => entry.contact)
   },
   render: () => {
     let component: ReactRenderer | null = null
@@ -143,6 +156,7 @@ export const mentionSuggestionConfig = {
           props,
           editor: props.editor,
         })
+        popup.appendChild(component.element)
 
         if (props.clientRect) {
           const rect = props.clientRect()

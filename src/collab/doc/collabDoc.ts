@@ -21,7 +21,7 @@ interface TrackedBlock {
 interface BlockEditMessage {
   pageId: string
   blockId: string
-  edit: Partial<Block['content']>
+  edit: Record<string, unknown>
   updatedAt: number
 }
 
@@ -46,6 +46,36 @@ function makeTrackedBlock(block: Block): TrackedBlock {
     order: block.order,
     content,
     updatedAt: block.updatedAt,
+  }
+}
+
+function makeBlockFromEdit(
+  blockId: string,
+  edit: Record<string, unknown>,
+  updatedAt: number
+): TrackedBlock {
+  const type = typeof edit.type === 'string' ? edit.type : 'paragraph'
+  const parentBlockId =
+    edit.parentBlockId === null || typeof edit.parentBlockId === 'string'
+      ? edit.parentBlockId
+      : null
+  const order = typeof edit.order === 'number' ? edit.order : updatedAt
+  const content: Record<string, TrackedField> = {}
+
+  for (const [key, value] of Object.entries(edit)) {
+    if (key === 'id' || key === 'type' || key === 'parentBlockId' || key === 'order' || key === 'updatedAt' || key === 'deleted') {
+      continue
+    }
+    content[key] = { value, updatedAt }
+  }
+
+  return {
+    id: blockId,
+    type,
+    parentBlockId,
+    order,
+    content,
+    updatedAt,
   }
 }
 
@@ -84,9 +114,9 @@ function makeInitialState(page: Page): { pageMeta: PageMeta; blocks: Record<stri
   }
 }
 
-function mergeEdit(block: TrackedBlock | undefined, edit: Partial<Block['content']>, updatedAt: number): TrackedBlock {
+function mergeEdit(block: TrackedBlock | undefined, edit: Record<string, unknown>, updatedAt: number): TrackedBlock {
   if (!block) {
-    throw new Error('applyLocalEdit: unknown blockId')
+    throw new Error('mergeEdit: unknown blockId')
   }
 
   const nextContent: Record<string, TrackedField> = { ...block.content }
@@ -110,7 +140,7 @@ export interface CollabDocOptions {
 }
 
 export interface CollabDoc {
-  applyLocalEdit(blockId: string, edit: Partial<Block['content']>): void
+  applyLocalEdit(blockId: string, edit: Record<string, unknown>): void
   applyRemoteUpdate(update: Uint8Array): void
   localUpdates$: Observable<Uint8Array>
   changes$: Observable<void>
@@ -129,17 +159,19 @@ export function createCollabDoc(options: CollabDocOptions): CollabDoc {
   const awareness = new Awareness(ydoc)
   let lastActivityAt = options.page.updatedAt
 
-  function emitChange() {
+  function emitChange(): void {
     changesSubject.next()
   }
 
   function applyMessage(message: BlockEditMessage) {
-    const block = state.blocks[message.blockId]
-    if (!block || message.pageId !== state.pageMeta.id) {
+    if (message.pageId !== state.pageMeta.id) {
       return
     }
 
-    state.blocks[message.blockId] = mergeEdit(block, message.edit, message.updatedAt)
+    const existing = state.blocks[message.blockId]
+    state.blocks[message.blockId] = existing
+      ? mergeEdit(existing, message.edit, message.updatedAt)
+      : makeBlockFromEdit(message.blockId, message.edit, message.updatedAt)
     state.pageUpdatedAt = Math.max(state.pageUpdatedAt, message.updatedAt)
     lastActivityAt = now()
     emitChange()
@@ -149,11 +181,9 @@ export function createCollabDoc(options: CollabDocOptions): CollabDoc {
     applyLocalEdit(blockId, edit) {
       const timestamp = now()
       const block = state.blocks[blockId]
-      if (!block) {
-        throw new Error(`applyLocalEdit: unknown blockId "${blockId}"`)
-      }
-
-      state.blocks[blockId] = mergeEdit(block, edit, timestamp)
+      state.blocks[blockId] = block
+        ? mergeEdit(block, edit, timestamp)
+        : makeBlockFromEdit(blockId, edit, timestamp)
       state.pageUpdatedAt = Math.max(state.pageUpdatedAt, timestamp)
       lastActivityAt = timestamp
       localUpdatesSubject.next(encodeMessage({ pageId: state.pageMeta.id, blockId, edit, updatedAt: timestamp }))

@@ -10,6 +10,11 @@ export interface NostrContact {
   picture?: string
 }
 
+export interface CachedMentionContact {
+  contact: NostrContact
+  searchText: string
+}
+
 function dedupeContacts(contacts: NostrContact[]): NostrContact[] {
   const byPubkey = new Map<string, NostrContact>()
   for (const contact of contacts) {
@@ -76,9 +81,30 @@ async function loadContactProfiles(pubkeys: string[], relayUrls: string[]): Prom
 }
 
 let cachedContacts: NostrContact[] = []
+let cachedMentionContacts: CachedMentionContact[] = []
+
+function buildCachedMentionContacts(contacts: NostrContact[]): CachedMentionContact[] {
+  return contacts.map((contact) => {
+    const searchText = [
+      contact.petname,
+      contact.displayName,
+      contact.name,
+      contact.pubkey,
+    ]
+      .filter((value): value is string => typeof value === 'string' && value.length > 0)
+      .join(' ')
+      .toLowerCase()
+
+    return { contact, searchText }
+  })
+}
 
 export function getCachedContacts(): NostrContact[] {
   return cachedContacts
+}
+
+export function getCachedMentionContacts(): CachedMentionContact[] {
+  return cachedMentionContacts
 }
 
 export async function loadNostrContacts(pubkey: string, relayUrls: string[]): Promise<NostrContact[]> {
@@ -106,6 +132,7 @@ export async function loadNostrContacts(pubkey: string, relayUrls: string[]): Pr
         return leftLabel.localeCompare(rightLabel)
       })
     cachedContacts = result
+    cachedMentionContacts = buildCachedMentionContacts(result)
     return result
   } catch (error) {
     console.warn('[NostrContacts] failed to load contact list', error)

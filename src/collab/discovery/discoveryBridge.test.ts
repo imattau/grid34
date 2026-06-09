@@ -64,6 +64,7 @@ describe('createDiscoveryBridge', () => {
     }
 
     const bridge = createDiscoveryBridge({
+      workspaceId: 'workspace-1',
       secretKey: selfSk,
       publisher,
       collaboratorList,
@@ -96,6 +97,7 @@ describe('createDiscoveryBridge', () => {
 
     let handler: ((event: NostrEvent) => void) | undefined
     const bridge = createDiscoveryBridge({
+      workspaceId: 'workspace-1',
       secretKey: selfSk,
       publisher: { publish: vi.fn(async (template: EventTemplate) => ({ ...template, id: 'evt', pubkey: selfPk, sig: 'sig' } as NostrEvent)) },
       collaboratorList: { getCollaboratorPubkeys: vi.fn(async () => [senderPk]) },
@@ -130,5 +132,62 @@ describe('createDiscoveryBridge', () => {
     })
 
     expect(emissions.at(-1)).toEqual({ [senderPk]: peerInfo })
+  })
+
+  it('ignores peers from a different workspace or with a mismatched sender pubkey', () => {
+    const selfSk = generateSecretKey()
+    const selfPk = getPublicKey(selfSk)
+    const senderSk = generateSecretKey()
+    const senderPk = getPublicKey(senderSk)
+    const wrongSenderPk = getPublicKey(generateSecretKey())
+
+    const peerInfo: PeerInfo = {
+      pubkey: senderPk,
+      peerId: 'peer-A',
+      multiaddrs: ['/ip4/10.0.0.1/tcp/4001'],
+      updatedAt: 2000,
+    }
+    const ciphertext = encryptPeerInfo(peerInfo, senderSk, selfPk)
+
+    let handler: ((event: NostrEvent) => void) | undefined
+    const bridge = createDiscoveryBridge({
+      workspaceId: 'workspace-1',
+      secretKey: selfSk,
+      publisher: { publish: vi.fn(async (template: EventTemplate) => ({ ...template, id: 'evt', pubkey: selfPk, sig: 'sig' } as NostrEvent)) },
+      collaboratorList: { getCollaboratorPubkeys: vi.fn(async () => [senderPk]) },
+      eventStore: {
+        subscribeEphemeral: (onEvent: (event: NostrEvent) => void) => {
+          handler = onEvent
+          return { unsubscribe: () => {} }
+        },
+      },
+    })
+
+    const emissions: Record<string, PeerInfo>[] = []
+    bridge.peers$.subscribe((peers) => emissions.push(peers))
+
+    handler!({
+      id: 'evt-wrong-workspace',
+      kind: 20001,
+      created_at: 2000,
+      pubkey: senderPk,
+      sig: 'sig',
+      tags: [['p', selfPk], ['workspace', 'workspace-2']],
+      content: ciphertext,
+    })
+
+    expect(emissions.at(-1)).toEqual({})
+
+    handler!({
+      id: 'evt-wrong-sender',
+      kind: 20001,
+      created_at: 2001,
+      pubkey: wrongSenderPk,
+      sig: 'sig',
+      tags: [['p', selfPk], ['workspace', 'workspace-1']],
+      content: ciphertext,
+    })
+
+    expect(emissions.at(-1)).toEqual({})
   })
 })

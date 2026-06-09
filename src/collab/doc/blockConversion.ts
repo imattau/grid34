@@ -3,25 +3,38 @@ import type { Block, Page } from '../../storage/repo/types'
 
 const BLOCKS_MAP_KEY = 'blocks'
 const CONTENT_PREFIX = 'content:'
+const FIELD_SEPARATOR = '::'
+const METADATA_KEYS = new Set(['id', 'type', 'parentBlockId', 'order', 'updatedAt', 'deleted'])
+
+function blockFieldKey(blockId: string, field: string): string {
+  return `${blockId}${FIELD_SEPARATOR}${field}`
+}
+
+function parseBlockFieldKey(key: string): { blockId: string; field: string } | null {
+  const separatorIndex = key.indexOf(FIELD_SEPARATOR)
+  if (separatorIndex <= 0) return null
+  return {
+    blockId: key.slice(0, separatorIndex),
+    field: key.slice(separatorIndex + FIELD_SEPARATOR.length),
+  }
+}
 
 export type PageMeta = Pick<Page, 'id' | 'title' | 'parentId' | 'order'> & { updatedAt?: number }
 
 export function pageToYDoc(page: Page): Y.Doc {
   const ydoc = new Y.Doc()
-  const blocksMap = ydoc.getMap<Y.Map<unknown>>(BLOCKS_MAP_KEY)
+  const blocksMap = ydoc.getMap<unknown>(BLOCKS_MAP_KEY)
 
   ydoc.transact(() => {
     for (const block of page.blocks) {
-      const blockMap = new Y.Map<unknown>()
-      blockMap.set('id', block.id)
-      blockMap.set('type', block.type)
-      blockMap.set('parentBlockId', block.parentBlockId)
-      blockMap.set('order', block.order)
-      blockMap.set('updatedAt', block.updatedAt)
+      blocksMap.set(blockFieldKey(block.id, 'id'), block.id)
+      blocksMap.set(blockFieldKey(block.id, 'type'), block.type)
+      blocksMap.set(blockFieldKey(block.id, 'parentBlockId'), block.parentBlockId)
+      blocksMap.set(blockFieldKey(block.id, 'order'), block.order)
+      blocksMap.set(blockFieldKey(block.id, 'updatedAt'), block.updatedAt)
       for (const [key, value] of Object.entries(block.content)) {
-        blockMap.set(`${CONTENT_PREFIX}${key}`, value)
+        blocksMap.set(blockFieldKey(block.id, `${CONTENT_PREFIX}${key}`), value)
       }
-      blocksMap.set(block.id, blockMap)
     }
   })
 
@@ -29,25 +42,58 @@ export function pageToYDoc(page: Page): Y.Doc {
 }
 
 export function yDocToPage(ydoc: Y.Doc, meta: PageMeta): Page {
-  const blocksMap = ydoc.getMap<Y.Map<unknown>>(BLOCKS_MAP_KEY)
-  const blocks: Block[] = []
-
-  blocksMap.forEach((blockMap) => {
-    const content: Record<string, unknown> = {}
-    for (const [key, value] of blockMap.entries()) {
-      if (key.startsWith(CONTENT_PREFIX)) {
-        content[key.slice(CONTENT_PREFIX.length)] = value
-      }
+  const blocksMap = ydoc.getMap<unknown>(BLOCKS_MAP_KEY)
+  const groupedBlocks = new Map<
+    string,
+    {
+      id?: string
+      type?: string
+      parentBlockId?: string | null
+      order?: number
+      updatedAt?: number
+      deleted?: boolean
+      content: Record<string, unknown>
     }
-    blocks.push({
-      id: blockMap.get('id') as string,
-      type: blockMap.get('type') as string,
-      parentBlockId: blockMap.get('parentBlockId') as string | null,
-      order: blockMap.get('order') as number,
-      content,
-      updatedAt: blockMap.get('updatedAt') as number,
-    })
+  >()
+
+  blocksMap.forEach((value, key) => {
+    const parsed = parseBlockFieldKey(key)
+    if (!parsed) return
+
+    const block = groupedBlocks.get(parsed.blockId) ?? { content: {} }
+    groupedBlocks.set(parsed.blockId, block)
+
+    if (parsed.field === 'id') {
+      block.id = value as string
+    } else if (parsed.field === 'type') {
+      block.type = value as string
+    } else if (parsed.field === 'parentBlockId') {
+      block.parentBlockId = value as string | null
+    } else if (parsed.field === 'order') {
+      block.order = value as number
+    } else if (parsed.field === 'updatedAt') {
+      block.updatedAt = value as number
+    } else if (parsed.field === 'deleted') {
+      block.deleted = value === true
+    } else if (parsed.field.startsWith(CONTENT_PREFIX)) {
+      block.content[parsed.field.slice(CONTENT_PREFIX.length)] = value
+    }
   })
+
+  const blocks: Block[] = []
+  for (const block of groupedBlocks.values()) {
+    if (block.deleted === true) continue
+    if (!block.id || !block.type) continue
+
+    blocks.push({
+      id: block.id,
+      type: block.type,
+      parentBlockId: block.parentBlockId ?? null,
+      order: block.order ?? 0,
+      content: block.content,
+      updatedAt: block.updatedAt ?? meta.updatedAt ?? 0,
+    })
+  }
 
   blocks.sort((a, b) => a.order - b.order)
 
@@ -66,19 +112,48 @@ export function yDocToPage(ydoc: Y.Doc, meta: PageMeta): Page {
 export function applyBlockEdit(
   ydoc: Y.Doc,
   blockId: string,
-  edit: Partial<Block['content']>,
-  updatedAt: number
+  edit: Record<string, unknown>,
+  updatedAt: number,
+  origin: unknown = 'local'
 ): void {
-  const blocksMap = ydoc.getMap<Y.Map<unknown>>(BLOCKS_MAP_KEY)
-  const blockMap = blocksMap.get(blockId)
-  if (!blockMap) {
-    throw new Error(`applyBlockEdit: unknown blockId "${blockId}"`)
-  }
-
+  const blocksMap = ydoc.getMap<unknown>(BLOCKS_MAP_KEY)
   ydoc.transact(() => {
-    for (const [key, value] of Object.entries(edit)) {
-      blockMap.set(`${CONTENT_PREFIX}${key}`, value)
+    const hasExistingBlock = blocksMap.has(blockFieldKey(blockId, 'id'))
+    const type = edit.type
+    const parentBlockId = edit.parentBlockId
+    const order = edit.order
+    const deleted = edit.deleted
+
+    if (typeof type === 'string') {
+      blocksMap.set(blockFieldKey(blockId, 'type'), type)
+    } else if (!hasExistingBlock) {
+      blocksMap.set(blockFieldKey(blockId, 'type'), 'paragraph')
     }
-    blockMap.set('updatedAt', updatedAt)
-  })
+
+    if (parentBlockId === null || typeof parentBlockId === 'string') {
+      blocksMap.set(blockFieldKey(blockId, 'parentBlockId'), parentBlockId)
+    } else if (!hasExistingBlock) {
+      blocksMap.set(blockFieldKey(blockId, 'parentBlockId'), null)
+    }
+
+    if (typeof order === 'number') {
+      blocksMap.set(blockFieldKey(blockId, 'order'), order)
+    } else if (!hasExistingBlock) {
+      blocksMap.set(blockFieldKey(blockId, 'order'), updatedAt)
+    }
+
+    for (const [key, value] of Object.entries(edit)) {
+      if (METADATA_KEYS.has(key)) continue
+      blocksMap.set(blockFieldKey(blockId, `${CONTENT_PREFIX}${key}`), value)
+    }
+
+    if (deleted === true) {
+      blocksMap.set(blockFieldKey(blockId, 'deleted'), true)
+    } else if (deleted === false) {
+      blocksMap.delete(blockFieldKey(blockId, 'deleted'))
+    }
+
+    blocksMap.set(blockFieldKey(blockId, 'id'), blockId)
+    blocksMap.set(blockFieldKey(blockId, 'updatedAt'), updatedAt)
+  }, origin)
 }

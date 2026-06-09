@@ -9,6 +9,7 @@ import { loadNostrContacts, type NostrContact } from '../contacts/nostrContacts'
 import { loadPageCollaborators, loadWorkspaceOwnerPubkey, savePageCollaborators } from '../contacts/pageCollaborators'
 import { publishWorkspaceAccessSnapshot } from '../contacts/workspaceAccess'
 import type { Page, Block } from '../../storage/repo/types'
+import type { DraftMap } from '../stores/draftStore'
 import {
   DndContext,
   closestCenter,
@@ -29,6 +30,7 @@ export interface PageEditorProps {
   workspaceId?: string
   currentUserPubkey?: string | null
   relayUrls?: string[]
+  enableNostrContacts?: boolean
 }
 
 interface PageObservation {
@@ -74,7 +76,72 @@ function extractMentionedPubkeys(blocks: Block[]): string[] {
   return Array.from(pubkeys)
 }
 
-export function PageEditor({ pageId, workspaceId: workspaceIdProp, currentUserPubkey, relayUrls: relayUrlsProp = [] }: PageEditorProps) {
+function mergeDraftsIntoBlocks(blocks: Block[], pageId: string, drafts: DraftMap): Block[] {
+  const pageDrafts = Object.entries(drafts).filter(([, draft]) => draft.pageId === pageId)
+  if (pageDrafts.length === 0) return blocks
+
+  function extractBlockContent(content: Record<string, unknown>): Record<string, unknown> {
+    const { deleted, type, order, parentBlockId, ...rest } = content
+    return rest
+  }
+
+  const nextBlocks = blocks.map((block) => {
+    const draft = drafts[block.id]
+    if (!draft || draft.pageId !== pageId) return block
+
+    if (draft.content.deleted === true) {
+      return {
+        ...block,
+        deleted: true,
+      }
+    }
+
+    return {
+      ...block,
+      type: typeof draft.content.type === 'string' ? (draft.content.type as string) : block.type,
+      parentBlockId:
+        draft.content.parentBlockId === null || typeof draft.content.parentBlockId === 'string'
+          ? (draft.content.parentBlockId as string | null)
+          : block.parentBlockId,
+      order: typeof draft.content.order === 'number' ? draft.content.order : block.order,
+      content: {
+        ...block.content,
+        ...extractBlockContent(draft.content),
+      },
+      updatedAt: Date.now(),
+    }
+  })
+
+  for (const [blockId, draft] of pageDrafts) {
+    const existingIndex = nextBlocks.findIndex((block) => block.id === blockId)
+    if (existingIndex !== -1) continue
+    if (draft.content.deleted === true) continue
+
+    nextBlocks.push({
+      id: blockId,
+      type: typeof draft.content.type === 'string' ? (draft.content.type as string) : 'paragraph',
+      parentBlockId:
+        draft.content.parentBlockId === null || typeof draft.content.parentBlockId === 'string'
+          ? (draft.content.parentBlockId as string | null)
+          : null,
+      order: typeof draft.content.order === 'number' ? draft.content.order : Date.now(),
+      content: extractBlockContent(draft.content),
+      updatedAt: Date.now(),
+    })
+  }
+
+  return nextBlocks
+    .filter((block) => !(block as Block & { deleted?: boolean }).deleted)
+    .sort((left, right) => left.order - right.order)
+}
+
+export function PageEditor({
+  pageId,
+  workspaceId: workspaceIdProp,
+  currentUserPubkey,
+  relayUrls: relayUrlsProp = [],
+  enableNostrContacts = true,
+}: PageEditorProps) {
   const repoStore = useRepoStore()
   const draftStore = useDraftStore()
   const [observation, setObservation] = useState<PageObservation>({ status: 'loading' })
@@ -88,6 +155,7 @@ export function PageEditor({ pageId, workspaceId: workspaceIdProp, currentUserPu
   const [contactsStatus, setContactsStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
   const [contactQuery, setContactQuery] = useState('')
   const [invitedPubkeys, setInvitedPubkeys] = useState<string[]>([])
+  const [drafts, setDrafts] = useState<DraftMap>({})
 
   const [lockedBlocks, setLockedBlocks] = useState<Record<string, { username: string; pubkey: string }>>({})
   const [currentUserInfo, setCurrentUserInfo] = useState<{ pubkey?: string; name?: string }>({})
@@ -204,8 +272,16 @@ export function PageEditor({ pageId, workspaceId: workspaceIdProp, currentUserPu
   }, [observation.page?.blocks, pendingFocusBlockId, slashMenu])
 
   useEffect(() => {
+    const subscription = draftStore.drafts$.subscribe((nextDrafts) => {
+      setDrafts(nextDrafts)
+    })
+    return () => subscription.unsubscribe()
+  }, [draftStore])
+
+  useEffect(() => {
     if (contactsStatus !== 'idle') return
     if (!resolvedUserPubkey) return
+    if (!enableNostrContacts) return
 
     const pubkey = resolvedUserPubkey
 
@@ -234,7 +310,7 @@ export function PageEditor({ pageId, workspaceId: workspaceIdProp, currentUserPu
         setContacts([])
         setContactsStatus('error')
       })
-  }, [contactsStatus, relayUrlsProp, resolvedUserPubkey])
+  }, [contactsStatus, enableNostrContacts, relayUrlsProp, resolvedUserPubkey])
 
   if (observation.status === 'loading') {
     return <p role="status">Decrypting…</p>
@@ -247,7 +323,7 @@ export function PageEditor({ pageId, workspaceId: workspaceIdProp, currentUserPu
   const page = observation.page
   const revisions = repoStore.listPageRevisions(pageId).slice(0, 10)
 
-  const sortedBlocks = page.blocks
+  const sortedBlocks = mergeDraftsIntoBlocks(page.blocks, pageId, drafts)
     .slice()
     .sort((a, b) => a.order - b.order)
 

@@ -32,6 +32,29 @@ describe('CollabDoc.applyLocalEdit / remoteUpdates$', () => {
     expect(doc.getPage().blocks[0].updatedAt).toBe(2000)
   })
 
+  it('can create a new block from a local edit', () => {
+    const page = makePage()
+    const doc = createCollabDoc({ page, now: () => 2000 })
+
+    doc.applyLocalEdit('block-2', {
+      type: 'paragraph',
+      order: 1,
+      parentBlockId: null,
+      text: '',
+      richText: null,
+    })
+
+    expect(doc.getPage().blocks).toHaveLength(2)
+    expect(doc.getPage().blocks[1]).toMatchObject({
+      id: 'block-2',
+      type: 'paragraph',
+      order: 1,
+      parentBlockId: null,
+      content: { text: '', richText: null },
+      updatedAt: 2000,
+    })
+  })
+
   it('applying a remote update merges peer changes into the local doc', () => {
     const page = makePage()
     const docA = createCollabDoc({ page, now: () => 2000 })
@@ -46,6 +69,32 @@ describe('CollabDoc.applyLocalEdit / remoteUpdates$', () => {
     docA.applyRemoteUpdate(remoteUpdate!)
 
     expect(docA.getPage().blocks[0].content).toEqual({ text: 'edited on peer B' })
+  })
+
+  it('can create a new block from a remote update', () => {
+    const page = makePage()
+    const docA = createCollabDoc({ page, now: () => 2000 })
+    const docB = createCollabDoc({ page, now: () => 3000 })
+
+    let remoteUpdate: Uint8Array | undefined
+    docB.localUpdates$.subscribe((update) => {
+      remoteUpdate = update
+    })
+    docB.applyLocalEdit('block-2', {
+      type: 'paragraph',
+      order: 1,
+      parentBlockId: null,
+      text: 'new block',
+    })
+
+    docA.applyRemoteUpdate(remoteUpdate!)
+
+    expect(docA.getPage().blocks).toHaveLength(2)
+    expect(docA.getPage().blocks[1]).toMatchObject({
+      id: 'block-2',
+      type: 'paragraph',
+      content: { text: 'new block' },
+    })
   })
 
   it('two concurrent edits to different fields converge identically on both peers', () => {

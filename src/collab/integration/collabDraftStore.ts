@@ -9,7 +9,7 @@ export interface CollabDocBackendOptions {
 }
 
 export interface CollabDocBackend {
-  stage(blockId: string, edit: Partial<Block['content']>): void
+  stage(blockId: string, edit: Record<string, unknown>): void
   convergedPage$: Observable<Page>
   shouldFlush(currentTime: number): boolean
   buildCheckpointPage(): Page

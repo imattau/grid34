@@ -53,4 +53,17 @@ describe('createRoomManager', () => {
     await manager.leaveRoom('workspace-1', 'page-2')
     expect(node.hangUp).toHaveBeenCalledWith(peerA.multiaddrs[0])
   })
+
+  it('dials newly discovered peers after a room is already open', async () => {
+    const node = makeMockNode()
+    const peers$ = new BehaviorSubject<Record<string, PeerInfo>>({})
+    const manager = createRoomManager({ node, peers$ })
+
+    await manager.joinRoom('workspace-1', 'page-1')
+
+    const peerA: PeerInfo = { pubkey: 'pkA', peerId: 'peerA', multiaddrs: ['/ip4/10.0.0.1/tcp/4001'], updatedAt: 1 }
+    peers$.next({ pkA: peerA })
+
+    expect(node.dial).toHaveBeenCalledWith(peerA.multiaddrs[0])
+  })
 })

@@ -3,6 +3,7 @@ import { EventStore } from 'applesauce-core'
 import { SimplePool } from 'nostr-tools/pool'
 import { finalizeEvent, generateSecretKey, type EventTemplate, type NostrEvent } from 'nostr-tools/pure'
 import { createDraftStore, type DraftRepoStore, type DraftStore } from '../editor/stores/draftStore'
+import { createLiveDraftStore } from '../collab/integration/liveDraftStore'
 import type { DbViewStore } from '../editor/stores/dbViewStore'
 import { createDbViewStore } from '../editor/stores/dbViewStore'
 import { buildPatchEventTemplate } from '../storage/commit/commitBuilder'
@@ -381,7 +382,7 @@ export async function createWorkspace(): Promise<Workspace> {
     },
   }
 
-  const draftStore = createDraftStore({
+  const baseDraftStore = createDraftStore({
     repoStore,
     commitBuilder: {
       buildPatchEventTemplate(options: { page: Page; repoId: string; cek: Uint8Array; createdAt: number }): EventTemplate {
@@ -417,6 +418,17 @@ export async function createWorkspace(): Promise<Workspace> {
     },
     debounceMs: 250,
     retryBaseMs: 250,
+  })
+
+  const draftStore = createLiveDraftStore({
+    baseStore: baseDraftStore,
+    repoStore,
+    checkpointDebounceMs: 250,
+    now: () => Date.now(),
+    onLivePage(page) {
+      if (destroyed) return
+      applyState(reduceRepo(currentState, [{ id: `live-${page.id}-${page.updatedAt}`, pageId: page.id, page, createdAt: Math.floor(Date.now() / 1000) }]))
+    },
   })
 
   async function syncRemotePatches(): Promise<void> {
@@ -463,6 +475,7 @@ export async function createWorkspace(): Promise<Workspace> {
     },
     destroy(): void {
       destroyed = true
+      ;(draftStore as DraftStore & { destroy?: () => void }).destroy?.()
       patchSubscription.unsubscribe()
       pool.destroy()
       stateSubject.complete()

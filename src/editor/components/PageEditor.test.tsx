@@ -559,7 +559,8 @@ describe('PageEditor', () => {
     expect(screen.queryByTitle('Delete block')).not.toBeInTheDocument()
   })
 
-  it('renders an invite reminder banner with an immediate Invite Editor button for uninvited mentions', async () => {
+  it('renders an invite reminder banner from staged rich text mentions before checkpoint', async () => {
+    const draftsSubject = new BehaviorSubject<Record<string, { pageId: string; content: Record<string, unknown> }>>({})
     const page: Page = {
       id: 'page-1',
       title: 'My Page',
@@ -599,7 +600,7 @@ describe('PageEditor', () => {
       observePage: vi.fn(() => of({ status: 'ready', page })),
       listPageRevisions: vi.fn(() => []),
     }
-    const draftStore: Partial<DraftStore> = { stage: vi.fn(), drafts$: of({}), flush: vi.fn() }
+    const draftStore: Partial<DraftStore> = { stage: vi.fn(), drafts$: draftsSubject.asObservable(), flush: vi.fn() }
     const dbViewStore: Partial<DbViewStore> = { observeRows: vi.fn(() => of([])), notifyChanged: vi.fn() }
 
     render(
@@ -611,6 +612,29 @@ describe('PageEditor', () => {
         </DraftStoreContext.Provider>
       </RepoStoreContext.Provider>
     )
+
+    draftsSubject.next({
+      'block-1': {
+        pageId: 'page-1',
+        content: {
+          text: '@Bob',
+          richText: {
+            type: 'doc',
+            content: [
+              {
+                type: 'paragraph',
+                content: [
+                  {
+                    type: 'mention',
+                    attrs: { id: 'npub-contact-2', label: 'Bob' },
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      },
+    })
 
     const alert = await screen.findByRole('alert')
     expect(alert).toHaveTextContent(/Bob is mentioned but not invited to this page/i)
