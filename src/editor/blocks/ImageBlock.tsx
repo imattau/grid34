@@ -3,47 +3,7 @@ import type { BlockProps } from './ParagraphBlock'
 import { useDraftStore } from '../contexts/storeContexts'
 import { encryptContent, decryptContent } from '../../storage/crypto/cryptoBox'
 import { buildMediaServerTargets, chooseFirstServedUrl, resolveMediaServerLists, type MediaServerKind, type MediaServerTarget } from './mediaServers'
-
-// Helper to convert buffer to hex string
-function bufferToHex(buffer: ArrayBuffer): string {
-  return Array.from(new Uint8Array(buffer))
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join('')
-}
-
-// Helper to compute SHA-256 hash of a string
-async function sha256(text: string): string {
-  const msgBuffer = new TextEncoder().encode(text)
-  const hashBuffer = await window.crypto.subtle.digest('SHA-256', msgBuffer)
-  return bufferToHex(hashBuffer)
-}
-
-// Sign authentication event using NIP-07 extension or local fallback
-async function signAuthEvent(template: { kind: number; tags: string[][]; content: string; created_at: number }) {
-  const win = window as any
-  if (win.nostr?.signEvent) {
-    try {
-      return await win.nostr.signEvent(template)
-    } catch (err) {
-      console.warn('NIP-07 signEvent failed, trying local fallback', err)
-    }
-  }
-
-  // Fallback to local signing key
-  const stored = localStorage.getItem('grid34_workspace_signing_key')
-  if (stored) {
-    try {
-      const parsed = JSON.parse(stored) as number[]
-      const secretKey = new Uint8Array(parsed)
-      // Import/use tools from nostr-tools
-      const { finalizeEvent } = await import('nostr-tools/pure')
-      return finalizeEvent(template, secretKey)
-    } catch (err) {
-      console.error('Failed to sign event using local fallback', err)
-    }
-  }
-  throw new Error('Signer unavailable. Please log in with a Nostr extension or generate a local key.')
-}
+import { createBlossomClient, createBrowserSigner } from './nostrSigner'
 
 export function ImageBlock({ block, pageId }: BlockProps) {
   const draftStore = useDraftStore()
@@ -152,39 +112,10 @@ export function ImageBlock({ block, pageId }: BlockProps) {
     }
   }, [uploadedFrom, cek])
 
-  async function uploadToBlossom(target: string, blob: Blob, fileHash: string, now: number): Promise<string> {
-    const uploadUrl = `${target.replace(/\/$/, '')}/upload`
-    const authEventTemplate = {
-      kind: 24242,
-      created_at: now,
-      tags: [
-        ['t', 'upload'],
-        ['x', fileHash],
-        ['expiration', String(now + 300)],
-      ],
-      content: 'Upload encrypted grid34 media file',
-    }
-
-    const signedEvent = await signAuthEvent(authEventTemplate)
-    const base64Auth = btoa(JSON.stringify(signedEvent))
-
-    const response = await fetch(uploadUrl, {
-      method: 'PUT',
-      headers: {
-        Authorization: `Nostr ${base64Auth}`,
-      },
-      body: blob,
-    })
-
-    if (!response.ok) {
-      const errText = await response.text()
-      throw new Error(`Blossom upload failed (${response.status}): ${errText}`)
-    }
-
-    const resData = await response.json()
-    return typeof resData.url === 'string' && resData.url.trim().length > 0
-      ? resData.url
-      : `${target.replace(/\/$/, '')}/${fileHash}`
+  async function uploadToBlossom(target: string, blob: Blob): Promise<string> {
+    const client = createBlossomClient(target)
+    const descriptor = await client.uploadBlob(blob, blob.type || 'application/octet-stream')
+    return descriptor.url
   }
 
   async function uploadToNip96(target: string, blob: Blob, now: number): Promise<string> {
@@ -209,7 +140,7 @@ export function ImageBlock({ block, pageId }: BlockProps) {
       content: 'Upload encrypted grid34 media file via NIP-96',
     }
 
-    const signedEvent = await signAuthEvent(authEventTemplate)
+    const signedEvent = await createBrowserSigner().signEvent(authEventTemplate)
     const base64Auth = btoa(JSON.stringify(signedEvent))
 
     const formData = new FormData()
@@ -271,9 +202,6 @@ export function ImageBlock({ block, pageId }: BlockProps) {
       const ciphertext = encryptContent(payload, cek)
       const blob = new Blob([ciphertext], { type: 'text/plain' })
 
-      // 3. Compute hash and build auth token
-      const fileHash = await sha256(ciphertext)
-      const now = Math.floor(Date.now() / 1000)
       const resolvedTargets = buildMediaServerTargets(mediaServers, {
         kind: 'blossom',
         url: 'https://blossom.primal.net',
@@ -285,9 +213,9 @@ export function ImageBlock({ block, pageId }: BlockProps) {
       const settled = await Promise.allSettled(
         uploadTargets.map(async (target: MediaServerTarget) => {
           if (target.kind === 'blossom') {
-            return await uploadToBlossom(target.url, blob, fileHash, now)
+            return await uploadToBlossom(target.url, blob)
           }
-          return await uploadToNip96(target.url, blob, now)
+          return await uploadToNip96(target.url, blob, Math.floor(Date.now() / 1000))
         })
       )
 

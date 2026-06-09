@@ -12,6 +12,7 @@ import { CREATE_SCHEMA_SQL } from '../storage/index/schema'
 import { decryptContent, generateCEK } from '../storage/crypto/cryptoBox'
 import { createRevisionHistoryState, recordRevision as recordPageRevision, type RevisionHistoryState } from './revisionHistory'
 import { publishPatch as publishToRelays } from '../storage/publish/publisher'
+import { getVisibleWorkspaceIds, loadActiveWorkspaceId, loadWorkspaceIds, normalizeActiveWorkspaceId } from './workspaceLifecycle'
 import { reduceRepo } from '../storage/repo/repoReducer'
 import type { Page, PageTreeState, Patch } from '../storage/repo/types'
 import { createRepoStore } from '../storage/store/repoStore'
@@ -194,18 +195,6 @@ function loadRevisionHistory(revisionsKey: string): RevisionHistoryState {
   }
 }
 
-function loadWorkspaceList(): string[] {
-  const stored = localStorage.getItem('grid34_workspaces')
-  if (!stored) return []
-
-  try {
-    const parsed = JSON.parse(stored) as string[]
-    return Array.from(new Set(parsed.filter((value) => typeof value === 'string' && value.trim().length > 0)))
-  } catch {
-    return []
-  }
-}
-
 function persistRevisionHistory(revisions: RevisionHistoryState, revisionsKey: string): void {
   localStorage.setItem(revisionsKey, JSON.stringify(revisions))
 }
@@ -290,10 +279,8 @@ export async function createWorkspace(): Promise<Workspace> {
   db.run(CREATE_SCHEMA_SQL)
 
   const storedActiveRepoId = typeof window !== 'undefined' ? localStorage.getItem('grid34_active_repo_id') : null
-  const repoId =
-    storedActiveRepoId ||
-    loadWorkspaceList()[0] ||
-    'workspace-repo'
+  const visibleWorkspaces = getVisibleWorkspaceIds(loadWorkspaceIds())
+  const repoId = normalizeActiveWorkspaceId(storedActiveRepoId ?? loadActiveWorkspaceId(), visibleWorkspaces)
   const stateKey = `grid34_state_${repoId}`
   const cekKey = `grid34_cek_${repoId}`
   const signingKey = `grid34_signing_key_${repoId}`

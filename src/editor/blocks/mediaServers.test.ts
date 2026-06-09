@@ -1,5 +1,11 @@
-import { describe, expect, it, vi } from 'vitest'
-import { buildMediaServerTargets, chooseFirstServedUrl } from './mediaServers'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { buildMediaServerTargets, chooseFirstServedUrl, resolveMediaServerLists } from './mediaServers'
+
+afterEach(() => {
+  localStorage.clear()
+  sessionStorage.clear()
+  delete (globalThis as typeof globalThis & { nostr?: unknown }).nostr
+})
 
 describe('mediaServers', () => {
   it('prefers configured lists over the fallback target', () => {
@@ -23,5 +29,18 @@ describe('mediaServers', () => {
 
   it('chooses the first served url from a deduplicated list', () => {
     expect(chooseFirstServedUrl(['https://a.example', 'https://a.example', 'https://b.example'])).toBe('https://a.example')
+  })
+
+  it('treats a flat getMediaServers list as shared blossom and nip96 fallback data', async () => {
+    ;(globalThis as typeof globalThis & { nostr?: unknown }).nostr = {
+      getMediaServers: vi.fn().mockResolvedValue(['https://shared.example']),
+    }
+
+    const lists = await resolveMediaServerLists()
+
+    expect(lists).toEqual({
+      blossom: ['https://shared.example'],
+      nip96: ['https://shared.example'],
+    })
   })
 })

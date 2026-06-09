@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import App, { requestNostrPermissions } from './App'
+import App, { applyWorkspaceConfigPayload, requestNostrPermissions } from './App'
 
 describe('App', () => {
   afterEach(() => {
@@ -161,5 +161,33 @@ describe('App', () => {
     expect(getBlossomServers).toHaveBeenCalled()
     expect(getNip96Servers).toHaveBeenCalled()
     expect(getMediaServers).toHaveBeenCalled()
+  })
+
+  it('keeps deleted workspaces hidden when syncing workspace config from relays', () => {
+    localStorage.setItem(
+      'grid34_deleted_workspaces',
+      JSON.stringify([
+        {
+          repoId: 'workspace-deleted',
+          deletedAt: 1_700_000_000_000,
+          purgeAt: 1_700_000_000_000 + 30 * 24 * 60 * 60 * 1000,
+        },
+      ])
+    )
+    localStorage.setItem('grid34_workspaces', JSON.stringify(['workspace-deleted', 'workspace-kept']))
+    localStorage.setItem('grid34_active_repo_id', 'workspace-deleted')
+
+    const changed = applyWorkspaceConfigPayload({
+      workspaces: ['workspace-deleted', 'workspace-new'],
+      activeRepoId: 'workspace-deleted',
+      updatedAt: Date.now(),
+      deletedWorkspaces: {
+        'workspace-deleted': 1_700_000_000_000,
+      },
+    })
+
+    expect(changed).toBe(true)
+    expect(JSON.parse(localStorage.getItem('grid34_workspaces') ?? '[]')).toEqual(['workspace-kept', 'workspace-new'])
+    expect(localStorage.getItem('grid34_active_repo_id')).toBe('workspace-kept')
   })
 })

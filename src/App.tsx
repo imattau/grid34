@@ -14,11 +14,23 @@ import {
 import { loadWorkspaceAccessWorkspaces, publishWorkspaceAccessSnapshot } from './editor/contacts/workspaceAccess'
 import './app/workspace.css'
 import { syncWorkspacesFromNostr, saveWorkspacesToNostr, type WorkspacesConfigPayload } from './app/nostrConfig'
+import {
+  getVisibleWorkspaceIds,
+  loadActiveWorkspaceId,
+  loadDeletedWorkspaces,
+  loadWorkspaceIds,
+  markWorkspaceDeleted,
+  normalizeActiveWorkspaceId,
+  purgeWorkspaceLocalData,
+  restoreWorkspace,
+  mergeDeletedWorkspaceRecords,
+  saveWorkspaceIds,
+  setActiveWorkspaceId,
+  toDeletedWorkspaceRecordMap,
+} from './app/workspaceLifecycle'
 import type { EventTemplate, NostrEvent } from 'nostr-tools/pure'
 
 const DEFAULT_RELAY_URLS = ['wss://nos.lol', 'wss://relay.damus.io', 'wss://relay.nostr.band']
-const WORKSPACES_STORAGE_KEY = 'grid34_workspaces'
-const ACTIVE_REPO_STORAGE_KEY = 'grid34_active_repo_id'
 
 function loadStoredUser(): NostrProfile | null {
   if (typeof window === 'undefined') return null
@@ -44,37 +56,24 @@ function loadStoredRelays(): string[] {
 }
 
 export function applyWorkspaceConfigPayload(payload: WorkspacesConfigPayload): boolean {
-  const currentListRaw = localStorage.getItem(WORKSPACES_STORAGE_KEY)
-  let nextWorkspaces = payload.workspaces
-  let changed = false
+  const deletedChanged = payload.deletedWorkspaces ? mergeDeletedWorkspaceRecords(payload.deletedWorkspaces) : false
+  const currentWorkspaces = getVisibleWorkspaceIds(loadWorkspaceIds())
+  const nextWorkspaces = getVisibleWorkspaceIds([...currentWorkspaces, ...payload.workspaces])
+  const currentActive = loadActiveWorkspaceId()
+  const nextActive = normalizeActiveWorkspaceId(payload.activeRepoId ?? currentActive, nextWorkspaces)
 
-  if (currentListRaw) {
-    try {
-      const current = JSON.parse(currentListRaw) as string[]
-      nextWorkspaces = Array.from(new Set([...current, ...payload.workspaces]))
-      if (nextWorkspaces.length !== current.length || nextWorkspaces.some((id, index) => id !== current[index])) {
-        changed = true
-      }
-    } catch {
-      changed = true
-    }
-  } else {
+  let changed = false
+  if (nextWorkspaces.length !== currentWorkspaces.length || nextWorkspaces.some((repoId, index) => repoId !== currentWorkspaces[index])) {
+    saveWorkspaceIds(nextWorkspaces)
     changed = true
   }
 
-  if (changed) {
-    localStorage.setItem(WORKSPACES_STORAGE_KEY, JSON.stringify(nextWorkspaces))
+  if (currentActive !== nextActive) {
+    setActiveWorkspaceId(nextActive)
+    changed = true
   }
 
-  if (payload.activeRepoId) {
-    const currentActive = localStorage.getItem(ACTIVE_REPO_STORAGE_KEY)
-    if (currentActive !== payload.activeRepoId) {
-      localStorage.setItem(ACTIVE_REPO_STORAGE_KEY, payload.activeRepoId)
-      changed = true
-    }
-  }
-
-  return changed
+  return changed || deletedChanged
 }
 
 function LoadingShell() {
@@ -269,7 +268,7 @@ function WorkspaceView({ workspace }: { workspace: Workspace }) {
     if (import.meta.env.VITEST) {
       const cached = loadAccessibleWorkspaces(user.pubkey)
       const ownerKey = loadWorkspaceOwnerPubkey(workspace.repoId)
-      const next = ownerKey === user.pubkey ? Array.from(new Set([...cached, workspace.repoId])) : cached
+      const next = getVisibleWorkspaceIds(ownerKey === user.pubkey ? Array.from(new Set([...cached, workspace.repoId])) : cached)
       setAccessibleWorkspaceIds(next)
       setAccessHydrated(true)
       return
@@ -277,7 +276,7 @@ function WorkspaceView({ workspace }: { workspace: Workspace }) {
 
     let cancelled = false
     const cached = loadAccessibleWorkspaces(user.pubkey)
-    const seeded = Array.from(new Set([...cached, workspace.repoId]))
+    const seeded = getVisibleWorkspaceIds(Array.from(new Set([...cached, workspace.repoId])))
     setAccessibleWorkspaceIds(seeded)
     saveAccessibleWorkspace(user.pubkey, workspace.repoId)
     setAccessHydrated(false)
@@ -292,7 +291,7 @@ function WorkspaceView({ workspace }: { workspace: Workspace }) {
           saveWorkspaceOwnerPubkey(workspace.repoId, matchingWorkspace.ownerPubkey)
         }
 
-        const next = Array.from(new Set([...seeded, ...snapshots.map((snapshot) => snapshot.workspaceId)]))
+        const next = getVisibleWorkspaceIds([...seeded, ...snapshots.map((snapshot) => snapshot.workspaceId)])
         setAccessibleWorkspaceIds(next)
         for (const workspaceId of next) {
           saveAccessibleWorkspace(user.pubkey, workspaceId)
@@ -308,6 +307,32 @@ function WorkspaceView({ workspace }: { workspace: Workspace }) {
     return () => {
       cancelled = true
     }
+  }, [relayUrls, user?.pubkey, workspace.repoId])
+
+  useEffect(() => {
+    if (!user?.pubkey || import.meta.env.VITEST) return
+
+    const deletedRecords = loadDeletedWorkspaces()
+    const dueRecords = deletedRecords.filter((record) => record.purgeAt <= Date.now())
+    if (dueRecords.length === 0) return
+
+    const visibleWorkspaces = getVisibleWorkspaceIds(loadWorkspaceIds())
+    const nextActiveRepoId = normalizeActiveWorkspaceId(loadActiveWorkspaceId(), visibleWorkspaces)
+    if (loadActiveWorkspaceId() !== nextActiveRepoId) {
+      setActiveWorkspaceId(nextActiveRepoId)
+    }
+
+    for (const record of dueRecords) {
+      purgeWorkspaceLocalData(record.repoId)
+    }
+
+    void saveWorkspacesToNostr(
+      user.pubkey,
+      visibleWorkspaces,
+      nextActiveRepoId,
+      relayUrls,
+      toDeletedWorkspaceRecordMap(deletedRecords)
+    )
   }, [relayUrls, user?.pubkey, workspace.repoId])
 
   useEffect(() => {
@@ -336,6 +361,7 @@ function WorkspaceView({ workspace }: { workspace: Workspace }) {
   const canViewWorkspace =
     user !== null &&
     accessHydrated &&
+    !loadDeletedWorkspaces().some((record) => record.repoId === workspace.repoId) &&
     (user.pubkey === workspaceOwnerPubkey ||
       accessibleWorkspaceIds.includes(workspace.repoId) ||
       selectedPageCollaborators.includes(user.pubkey))
@@ -706,39 +732,67 @@ function WorkspaceSwitcher({
   const [showImport, setShowImport] = useState(false)
 
   useEffect(() => {
-    const list = localStorage.getItem('grid34_workspaces')
-    if (list) {
-      try {
-        const parsed = JSON.parse(list) as string[]
-        const next = Array.from(new Set([
-          ...parsed.filter((value) => typeof value === 'string' && value.trim().length > 0),
-          activeRepoId,
-        ]))
-        setWorkspaces(next.length > 0 ? next : [activeRepoId])
-      } catch {
-        setWorkspaces([activeRepoId])
-      }
-    } else {
-      setWorkspaces([activeRepoId])
-    }
+    const next = Array.from(new Set([...loadWorkspaceIds(), activeRepoId]))
+    setWorkspaces(next.length > 0 ? next : [activeRepoId])
   }, [activeRepoId])
 
   const saveWorkspaces = (nextList: string[]) => {
     setWorkspaces(nextList)
-    localStorage.setItem('grid34_workspaces', JSON.stringify(nextList))
+    saveWorkspaceIds(nextList)
   }
 
-  const visibleWorkspaces = Array.from(new Set([...workspaces, ...accessibleWorkspaceIds]))
+  const deletedWorkspaces = loadDeletedWorkspaces()
+  const visibleWorkspaces = getVisibleWorkspaceIds([...workspaces, ...accessibleWorkspaceIds])
 
   const syncToNostr = async (nextList: string[], nextActiveId: string) => {
     if (currentUserPubkey) {
-      await saveWorkspacesToNostr(currentUserPubkey, nextList, nextActiveId, relayUrls)
+      await saveWorkspacesToNostr(
+        currentUserPubkey,
+        nextList,
+        nextActiveId,
+        relayUrls,
+        toDeletedWorkspaceRecordMap(loadDeletedWorkspaces())
+      )
     }
   }
 
   const handleSwitch = async (repoId: string) => {
-    localStorage.setItem('grid34_active_repo_id', repoId)
+    setActiveWorkspaceId(repoId)
     await syncToNostr(workspaces, repoId)
+    window.location.reload()
+  }
+
+  const handleDelete = async (repoId: string) => {
+    const confirmDelete = window.confirm(
+      `Delete workspace "${repoId}"? It will be hidden locally now and queued for relay cleanup in 30 days.`
+    )
+    if (!confirmDelete) return
+
+    markWorkspaceDeleted(repoId)
+    const nextList = getVisibleWorkspaceIds(loadWorkspaceIds())
+    saveWorkspaces(nextList)
+
+    const nextActiveId = activeRepoId === repoId ? normalizeActiveWorkspaceId(activeRepoId, nextList) : activeRepoId
+    setActiveWorkspaceId(nextActiveId)
+
+    await syncToNostr(nextList, nextActiveId)
+    window.location.reload()
+  }
+
+  const handleRestore = async (repoId: string) => {
+    const record = deletedWorkspaces.find((entry) => entry.repoId === repoId)
+    if (!record) return
+    if (record.purgeAt <= Date.now()) {
+      alert('This workspace has already passed its restore window.')
+      return
+    }
+
+    restoreWorkspace(repoId)
+    const nextList = getVisibleWorkspaceIds(loadWorkspaceIds())
+    saveWorkspaces(nextList)
+    setActiveWorkspaceId(repoId)
+
+    await syncToNostr(nextList, repoId)
     window.location.reload()
   }
 
@@ -894,6 +948,19 @@ function WorkspaceSwitcher({
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
                     </svg>
                   </button>
+                  <button
+                    type="button"
+                    title="Delete workspace"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      void handleDelete(id)
+                    }}
+                    className="opacity-44 hover:opacity-100 p-0.5 rounded hover:bg-red-100 text-gray-500 hover:text-red-700 transition-all"
+                  >
+                    <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 7h12m-9 0V5a1 1 0 011-1h4a1 1 0 011 1v2m-7 0h8m-9 0l1 12a1 1 0 001 1h6a1 1 0 001-1l1-12" />
+                    </svg>
+                  </button>
                   {isActive && (
                     <span className="text-[10px] text-green-600 font-bold px-1" title="Active">✓</span>
                   )}
@@ -903,6 +970,41 @@ function WorkspaceSwitcher({
           )
         })}
       </ul>
+
+      {deletedWorkspaces.length > 0 && (
+        <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50/70 p-2">
+          <div className="flex items-center justify-between gap-2 px-1 pb-1">
+            <span className="text-[9px] font-bold uppercase tracking-wider text-amber-700">Recently deleted</span>
+            <span className="text-[9px] text-amber-600">{deletedWorkspaces.length} hidden</span>
+          </div>
+          <ul className="list-none m-0 flex flex-col gap-1">
+            {deletedWorkspaces.map((record) => {
+              const restoreable = record.purgeAt > Date.now()
+              const daysLeft = Math.max(0, Math.ceil((record.purgeAt - Date.now()) / (24 * 60 * 60 * 1000)))
+              return (
+                <li key={record.repoId} className="list-none">
+                  <div className="flex items-center justify-between gap-2 rounded-md border border-amber-200 bg-white/80 px-2 py-1.5 text-[10px]">
+                    <div className="min-w-0">
+                      <div className="truncate font-mono text-amber-900">{record.repoId}</div>
+                      <div className="text-[9px] text-amber-600">
+                        {restoreable ? `${daysLeft} day${daysLeft === 1 ? '' : 's'} left to restore` : 'Restore window expired'}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => void handleRestore(record.repoId)}
+                      disabled={!restoreable}
+                      className="rounded border border-amber-300 bg-amber-100 px-2 py-1 font-medium text-amber-900 transition-colors hover:bg-amber-200 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Restore
+                    </button>
+                  </div>
+                </li>
+              )
+            })}
+          </ul>
+        </div>
+      )}
 
       <div className="flex flex-col gap-1.5 mt-1 px-1">
         {showImport ? (

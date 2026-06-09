@@ -35,6 +35,44 @@ function parseUrlList(value: unknown): string[] {
   return []
 }
 
+function collectUrlStrings(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return uniqueUrls(value.flatMap((item) => collectUrlStrings(item)))
+  }
+
+  if (typeof value === 'string') {
+    return parseUrlList(value)
+  }
+
+  if (!value || typeof value !== 'object') {
+    return []
+  }
+
+  const record = value as Record<string, unknown>
+  const collected: string[] = []
+  for (const nested of Object.values(record)) {
+    collected.push(...collectUrlStrings(nested))
+  }
+  return uniqueUrls(collected)
+}
+
+function normalizeServerListValue(value: unknown, preferredKeys: string[] = []): string[] {
+  const direct = parseUrlList(value)
+  if (direct.length > 0) return direct
+
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return []
+  }
+
+  const record = value as Record<string, unknown>
+  for (const key of preferredKeys) {
+    const urls = parseUrlList(record[key])
+    if (urls.length > 0) return urls
+  }
+
+  return collectUrlStrings(value)
+}
+
 function getStoredNostrUserPubkey(): string | null {
   if (typeof window === 'undefined') return null
   const stored = sessionStorage.getItem('nostr_user')
@@ -69,14 +107,16 @@ function readStoredMediaServerLists(): MediaServerLists {
     try {
       const parsed = JSON.parse(raw) as unknown
       if (Array.isArray(parsed)) {
-        next.blossom.push(...parseUrlList(parsed))
+        const urls = parseUrlList(parsed)
+        next.blossom.push(...urls)
+        next.nip96.push(...urls)
         continue
       }
 
       if (parsed && typeof parsed === 'object') {
         const maybeRecord = parsed as Record<string, unknown>
-        next.blossom.push(...parseUrlList(maybeRecord.blossom))
-        next.nip96.push(...parseUrlList(maybeRecord.nip96))
+        next.blossom.push(...normalizeServerListValue(maybeRecord.blossom ?? parsed, ['blossom', 'servers', 'urls', 'items', 'list']))
+        next.nip96.push(...normalizeServerListValue(maybeRecord.nip96 ?? parsed, ['nip96', 'servers', 'urls', 'items', 'list']))
       }
     } catch {
       next.blossom.push(...parseUrlList(raw))
@@ -105,7 +145,7 @@ async function readNostrProvidedMediaServerLists(): Promise<MediaServerLists> {
 
   try {
     if (typeof api.getBlossomServers === 'function') {
-      next.blossom.push(...parseUrlList(await resolveMaybePromise(api.getBlossomServers())))
+      next.blossom.push(...normalizeServerListValue(await resolveMaybePromise(api.getBlossomServers()), ['blossom', 'servers', 'urls', 'items', 'list']))
     }
   } catch {
     // Ignore extension-specific failures and continue with other sources.
@@ -113,7 +153,7 @@ async function readNostrProvidedMediaServerLists(): Promise<MediaServerLists> {
 
   try {
     if (typeof api.getNip96Servers === 'function') {
-      next.nip96.push(...parseUrlList(await resolveMaybePromise(api.getNip96Servers())))
+      next.nip96.push(...normalizeServerListValue(await resolveMaybePromise(api.getNip96Servers()), ['nip96', 'servers', 'urls', 'items', 'list']))
     }
   } catch {
     // Ignore extension-specific failures and continue with other sources.
@@ -123,11 +163,13 @@ async function readNostrProvidedMediaServerLists(): Promise<MediaServerLists> {
     if (typeof api.getMediaServers === 'function') {
       const servers = await resolveMaybePromise(api.getMediaServers())
       if (Array.isArray(servers)) {
-        next.blossom.push(...parseUrlList(servers))
+        const urls = parseUrlList(servers)
+        next.blossom.push(...urls)
+        next.nip96.push(...urls)
       } else if (servers && typeof servers === 'object') {
         const record = servers as Record<string, unknown>
-        next.blossom.push(...parseUrlList(record.blossom))
-        next.nip96.push(...parseUrlList(record.nip96))
+        next.blossom.push(...normalizeServerListValue(record.blossom ?? servers, ['blossom', 'servers', 'urls', 'items', 'list']))
+        next.nip96.push(...normalizeServerListValue(record.nip96 ?? servers, ['nip96', 'servers', 'urls', 'items', 'list']))
       }
     }
   } catch {

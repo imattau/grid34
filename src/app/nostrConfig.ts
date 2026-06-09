@@ -1,11 +1,13 @@
 import { SimplePool } from 'nostr-tools/pool'
 import type { NostrEvent } from 'nostr-tools/pure'
+import { loadDeletedWorkspaces, mergeDeletedWorkspaceRecords, toDeletedWorkspaceRecordMap } from './workspaceLifecycle'
 
 export interface WorkspacesConfigPayload {
   workspaces: string[]
   activeRepoId: string
   updatedAt: number
   ceks?: Record<string, string> // Map of repoId to JSON-serialized CEK byte array
+  deletedWorkspaces?: Record<string, number>
 }
 
 export async function syncWorkspacesFromNostr(
@@ -29,6 +31,10 @@ export async function syncWorkspacesFromNostr(
       const decrypted = await (window as any).nostr.nip04.decrypt(pubkey, event.content)
       const data = JSON.parse(decrypted) as WorkspacesConfigPayload
       if (!data || !Array.isArray(data.workspaces)) continue
+
+      if (data.deletedWorkspaces) {
+        mergeDeletedWorkspaceRecords(data.deletedWorkspaces)
+      }
 
       if (!latest || data.updatedAt >= latest.updatedAt) {
         latest = data
@@ -57,7 +63,8 @@ export async function saveWorkspacesToNostr(
   pubkey: string,
   workspaces: string[],
   activeRepoId: string,
-  relays: string[]
+  relays: string[],
+  deletedWorkspaces: Record<string, number> = toDeletedWorkspaceRecordMap(loadDeletedWorkspaces())
 ): Promise<void> {
   if (typeof window === 'undefined' || !(window as any).nostr) return
 
@@ -79,6 +86,7 @@ export async function saveWorkspacesToNostr(
       activeRepoId,
       updatedAt: Date.now(),
       ceks,
+      deletedWorkspaces,
     }
     const encrypted = await (window as any).nostr.nip04.encrypt(pubkey, JSON.stringify(payload))
     const template = {
