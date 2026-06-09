@@ -9,6 +9,11 @@ import { TodoBlock } from './TodoBlock'
 import { CalloutBlock } from './CalloutBlock'
 import { CodeBlock } from './CodeBlock'
 import { TableBlock } from './TableBlock'
+import { QuoteBlock } from './QuoteBlock'
+import { ToggleBlock } from './ToggleBlock'
+import { BookmarkBlock } from './BookmarkBlock'
+import { RelationBlock } from './RelationBlock'
+import { TemplateBlock } from './TemplateBlock'
 
 export type BlockType =
   | 'paragraph'
@@ -21,6 +26,11 @@ export type BlockType =
   | 'callout'
   | 'code'
   | 'table'
+  | 'quote'
+  | 'toggle'
+  | 'bookmark'
+  | 'relation'
+  | 'template'
 
 export type { BlockProps }
 
@@ -35,4 +45,9 @@ export const blockComponentRegistry: Record<BlockType, ComponentType<BlockProps>
   callout: CalloutBlock,
   code: CodeBlock,
   table: TableBlock,
+  quote: QuoteBlock,
+  toggle: ToggleBlock,
+  bookmark: BookmarkBlock,
+  relation: RelationBlock,
+  template: TemplateBlock,
 }

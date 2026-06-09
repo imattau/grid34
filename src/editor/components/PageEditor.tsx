@@ -456,13 +456,35 @@ export function PageEditor({
     const blockId = slashMenu.blockId
     const currentBlock = sortedBlocks.find((b) => b.id === blockId)
     const currentContent = currentBlock?.content ?? {}
+    const nextRichText = typeof item.content.richText === 'string' || typeof item.content.richText === 'object'
+      ? item.content.richText
+      : null
+    const nextText = typeof item.content.text === 'string' ? item.content.text : ''
+    const nextContent =
+      item.type === 'database'
+        ? {
+            ...item.content,
+            databaseId:
+              typeof item.content.databaseId === 'string' && item.content.databaseId.trim().length > 0
+                ? item.content.databaseId
+                : `db-${blockId}`,
+            columns:
+              Array.isArray(item.content.columns) && item.content.columns.length > 0
+                ? item.content.columns
+                : ['Column 1', 'Column 2'],
+            rowEdits:
+              item.content.rowEdits && typeof item.content.rowEdits === 'object' && !Array.isArray(item.content.rowEdits)
+                ? item.content.rowEdits
+                : {},
+          }
+        : item.content
 
     editorDraftStore.stage(pageId, blockId, {
       ...currentContent,
       type: item.type,
-      ...item.content,
-      text: '',
-      richText: null,
+      ...nextContent,
+      text: nextText,
+      richText: nextRichText,
     })
 
     setSlashMenu(null)

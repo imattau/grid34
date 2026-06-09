@@ -123,6 +123,75 @@ describe('PageEditor', () => {
     )
   })
 
+  it('creates a quote block from the slash menu with its preset content', async () => {
+    const emptyPage: Page = { id: 'page-1', title: 'Empty Page', parentId: null, order: 0, updatedAt: 1000, blocks: [{ id: 'block-1', type: 'paragraph', parentBlockId: null, order: 0, content: { text: '' }, updatedAt: 1000 }] }
+    const repoStore: Partial<EditorRepoStore> = {
+      pageTree$: of({ pages: {} }),
+      observePage: vi.fn(() => of({ status: 'ready', page: emptyPage })),
+      listPageRevisions: vi.fn(() => []),
+    }
+    const draftStore: Partial<DraftStore> = { stage: vi.fn(), drafts$: of({}), flush: vi.fn() }
+    const dbViewStore: Partial<DbViewStore> = { observeRows: vi.fn(() => of([])), notifyChanged: vi.fn() }
+
+    render(
+      <RepoStoreContext.Provider value={repoStore as EditorRepoStore}>
+        <DraftStoreContext.Provider value={draftStore as DraftStore}>
+          <DbViewStoreContext.Provider value={dbViewStore as DbViewStore}>
+            <PageEditor pageId="page-1" currentUserPubkey="npub-self" />
+          </DbViewStoreContext.Provider>
+        </DraftStoreContext.Provider>
+      </RepoStoreContext.Provider>
+    )
+
+    await userEvent.click(screen.getByRole('button', { name: /add block/i }))
+    await userEvent.click(await screen.findByRole('button', { name: /quote/i }))
+
+    expect(draftStore.stage).toHaveBeenCalledWith(
+      'page-1',
+      expect.any(String),
+      expect.objectContaining({
+        type: 'quote',
+        text: '',
+        attribution: '',
+      })
+    )
+  })
+
+  it('creates a database block with a generated database id from the slash menu', async () => {
+    const emptyPage: Page = { id: 'page-1', title: 'Empty Page', parentId: null, order: 0, updatedAt: 1000, blocks: [{ id: 'block-1', type: 'paragraph', parentBlockId: null, order: 0, content: { text: '' }, updatedAt: 1000 }] }
+    const repoStore: Partial<EditorRepoStore> = {
+      pageTree$: of({ pages: {} }),
+      observePage: vi.fn(() => of({ status: 'ready', page: emptyPage })),
+      listPageRevisions: vi.fn(() => []),
+    }
+    const draftStore: Partial<DraftStore> = { stage: vi.fn(), drafts$: of({}), flush: vi.fn() }
+    const dbViewStore: Partial<DbViewStore> = { observeRows: vi.fn(() => of([])), notifyChanged: vi.fn() }
+
+    render(
+      <RepoStoreContext.Provider value={repoStore as EditorRepoStore}>
+        <DraftStoreContext.Provider value={draftStore as DraftStore}>
+          <DbViewStoreContext.Provider value={dbViewStore as DbViewStore}>
+            <PageEditor pageId="page-1" currentUserPubkey="npub-self" />
+          </DbViewStoreContext.Provider>
+        </DraftStoreContext.Provider>
+      </RepoStoreContext.Provider>
+    )
+
+    await userEvent.click(await screen.findByRole('button', { name: /add block/i }))
+    await userEvent.click(await screen.findByRole('button', { name: /database/i }))
+
+    expect(draftStore.stage).toHaveBeenCalledWith(
+      'page-1',
+      expect.any(String),
+      expect.objectContaining({
+        type: 'database',
+        databaseId: expect.any(String),
+        columns: ['Column 1', 'Column 2'],
+        rowEdits: {},
+      })
+    )
+  })
+
   it('shows a page menu with revision restores', async () => {
     const revisionPage: Page = {
       ...readyPage,
@@ -465,13 +534,13 @@ describe('PageEditor', () => {
         richText: null,
       })
     )
-    expect(await screen.findByText(/basic blocks/i)).toBeInTheDocument()
+    expect(await screen.findByText(/^Writing$/)).toBeInTheDocument()
 
     await userEvent.click(screen.getByRole('button', { name: /plain text block/i }))
 
     expect(restoreBlockEditorFocus).toHaveBeenCalledWith(expect.any(String))
     await waitFor(() => {
-      expect(screen.queryByText(/basic blocks/i)).not.toBeInTheDocument()
+      expect(screen.queryByText(/^Writing$/)).not.toBeInTheDocument()
     })
   })
 

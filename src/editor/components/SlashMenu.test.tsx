@@ -33,4 +33,20 @@ describe('SlashMenu', () => {
     expect(editor).toHaveFocus()
     expect(onClose).not.toHaveBeenCalled()
   })
+
+  it('includes the knowledge-set block types', () => {
+    render(
+      <SlashMenu query="" rect={new DOMRect(0, 0, 1, 1)} onSelect={vi.fn()} onClose={vi.fn()} />
+    )
+
+    expect(screen.getByText('Writing')).toBeInTheDocument()
+    expect(screen.getByText('Structure')).toBeInTheDocument()
+    expect(screen.getByText('Media')).toBeInTheDocument()
+    expect(screen.getByText('Links')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /quote/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /toggle/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /bookmark/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /relation/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /template/i })).toBeInTheDocument()
+  })
 })

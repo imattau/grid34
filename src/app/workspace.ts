@@ -230,23 +230,27 @@ function syncDatabaseViewRows(db: any, dbViewStore: DbViewStore, databaseRows: D
       if (block.type !== 'database') continue
 
       const viewSpec = block.content as ViewSpec & { rowEdits?: Record<string, Record<string, unknown>> }
-      activeDatabaseIds.add(viewSpec.databaseId)
+      const databaseId =
+        typeof viewSpec.databaseId === 'string' && viewSpec.databaseId.trim().length > 0
+          ? viewSpec.databaseId
+          : block.id
+      activeDatabaseIds.add(databaseId)
 
-      const currentRows = { ...(databaseRows[viewSpec.databaseId] ?? {}) }
+      const currentRows = { ...(databaseRows[databaseId] ?? {}) }
       for (const [rowId, patch] of Object.entries(viewSpec.rowEdits ?? {})) {
         currentRows[rowId] = { ...(currentRows[rowId] ?? {}), ...patch }
       }
-      databaseRows[viewSpec.databaseId] = currentRows
+      databaseRows[databaseId] = currentRows
 
-      db.run('DELETE FROM db_rows WHERE database_block_id = ?', [viewSpec.databaseId])
+      db.run('DELETE FROM db_rows WHERE database_block_id = ?', [databaseId])
       for (const [rowId, values] of Object.entries(currentRows)) {
         db.run(
           'INSERT OR REPLACE INTO db_rows (id, database_block_id, properties_json) VALUES (?, ?, ?)',
-          [rowId, viewSpec.databaseId, JSON.stringify(values)]
+          [rowId, databaseId, JSON.stringify(values)]
         )
       }
 
-      dbViewStore.notifyChanged(viewSpec.databaseId)
+      dbViewStore.notifyChanged(databaseId)
     }
   }
 
