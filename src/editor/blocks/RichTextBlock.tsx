@@ -6,7 +6,7 @@ import type { Block } from '../../storage/repo/types'
 import { serializeRichTextContent, shouldApplyIncomingRichTextContent } from './richTextSync'
 import { shouldSplitRichTextBlockOnEnter, type RichTextEnterBehavior } from './richTextEnterBehavior'
 import Mention from '@tiptap/extension-mention'
-import { mentionSuggestionConfig } from './mentionSuggestions'
+import { mentionSuggestionConfig } from './mentionSuggestions.tsx'
 
 import TaskList from '@tiptap/extension-task-list'
 import TaskItem from '@tiptap/extension-task-item'
