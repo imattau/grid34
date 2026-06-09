@@ -147,9 +147,15 @@ export const mentionSuggestionConfig = {
         if (props.clientRect) {
           const rect = props.clientRect()
           if (rect) {
-            popup.style.top = `${rect.bottom + window.scrollY}px`
-            popup.style.left = `${rect.left + window.scrollX}px`
+            popup.style.top = `${rect.bottom}px`
+            popup.style.left = `${rect.left}px`
+          } else {
+            popup.style.top = '100px'
+            popup.style.left = '100px'
           }
+        } else {
+          popup.style.top = '100px'
+          popup.style.left = '100px'
         }
       },
       onUpdate: (props: any) => {
@@ -158,8 +164,8 @@ export const mentionSuggestionConfig = {
         if (props.clientRect) {
           const rect = props.clientRect()
           if (rect && popup) {
-            popup.style.top = `${rect.bottom + window.scrollY}px`
-            popup.style.left = `${rect.left + window.scrollX}px`
+            popup.style.top = `${rect.bottom}px`
+            popup.style.left = `${rect.left}px`
           }
         }
       },
