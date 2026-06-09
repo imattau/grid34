@@ -1,13 +1,14 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import App from './App'
+import App, { requestNostrPermissions } from './App'
 
 describe('App', () => {
   afterEach(() => {
     vi.useRealTimers()
     localStorage.clear()
     sessionStorage.clear()
+    delete (globalThis as typeof globalThis & { nostr?: unknown }).nostr
   })
 
   it('shows a guest shell until a Nostr user logs in', async () => {
@@ -94,6 +95,23 @@ describe('App', () => {
     expect(screen.queryByText(/import existing/i)).not.toBeInTheDocument()
   }, 30000)
 
+  it('shows checkpoint feedback when the checkpoint button is clicked', async () => {
+    vi.useRealTimers()
+    localStorage.clear()
+    sessionStorage.clear()
+    localStorage.setItem('grid34_workspace_owner_workspace-repo', 'pubkey-1')
+    sessionStorage.setItem('nostr_user', JSON.stringify({ pubkey: 'pubkey-1', name: 'Alice', picture: 'https://example.com/avatar.png' }))
+
+    const user = userEvent.setup()
+    render(<App />)
+
+    const checkpointButton = await screen.findByRole('button', { name: /checkpoint/i }, { timeout: 10000 })
+    await user.click(checkpointButton)
+
+    expect(await screen.findByText(/checkpoint saved/i, {}, { timeout: 10000 })).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: /checkpointed/i }, { timeout: 10000 })).toBeInTheDocument()
+  }, 30000)
+
   it('shows a locked shell when the signed-in user is not invited', async () => {
     vi.useRealTimers()
     localStorage.clear()
@@ -107,4 +125,41 @@ describe('App', () => {
     expect(screen.getByText(/ask the owner to invite you/i)).toBeInTheDocument()
     expect(screen.queryByText(/workspace-repo/i)).not.toBeInTheDocument()
   }, 30000)
+
+  it('preflights the NIP-07 signer permissions on login', async () => {
+    const signEvent = vi.fn().mockResolvedValue({ id: 'signed-event' })
+    const encrypt = vi.fn().mockResolvedValue('ciphertext')
+    const decrypt = vi.fn().mockResolvedValue('plaintext')
+    const getRelays = vi.fn().mockResolvedValue({ 'wss://relay.example': true })
+    const getBlossomServers = vi.fn().mockResolvedValue(['https://blossom.example'])
+    const getNip96Servers = vi.fn().mockResolvedValue(['https://nip96.example'])
+    const getMediaServers = vi.fn().mockResolvedValue({
+      blossom: ['https://media-blossom.example'],
+      nip96: ['https://media-nip96.example'],
+    })
+    ;(globalThis as typeof globalThis & { nostr?: unknown }).nostr = {
+      getPublicKey: vi.fn().mockResolvedValue('pubkey-1'),
+      signEvent,
+      nip04: { encrypt, decrypt },
+      getRelays,
+      getBlossomServers,
+      getNip96Servers,
+      getMediaServers,
+    }
+
+    await requestNostrPermissions('pubkey-1')
+
+    expect(signEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 1,
+        content: 'grid34 login permission check',
+      })
+    )
+    expect(encrypt).toHaveBeenCalledWith('pubkey-1', expect.stringMatching(/^grid34-login:/))
+    expect(decrypt).toHaveBeenCalledWith('pubkey-1', 'ciphertext')
+    expect(getRelays).toHaveBeenCalled()
+    expect(getBlossomServers).toHaveBeenCalled()
+    expect(getNip96Servers).toHaveBeenCalled()
+    expect(getMediaServers).toHaveBeenCalled()
+  })
 })

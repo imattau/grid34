@@ -5,6 +5,7 @@ export const WORKSPACE_ACCESS_EVENT_KIND = 30434
 
 export interface WorkspaceAccessSnapshot {
   workspaceId: string
+  pageId?: string
   collaboratorPubkeys: string[]
   ownerPubkey?: string
   updatedAt: number
@@ -30,6 +31,7 @@ function parseWorkspaceAccessSnapshot(event: NostrEvent): WorkspaceAccessSnapsho
 
     return {
       workspaceId: content.workspaceId,
+      pageId: typeof content.pageId === 'string' && content.pageId.trim().length > 0 ? content.pageId : undefined,
       collaboratorPubkeys,
       ownerPubkey: typeof content.ownerPubkey === 'string' && content.ownerPubkey.trim().length > 0 ? content.ownerPubkey : undefined,
       updatedAt: typeof content.updatedAt === 'number' ? content.updatedAt : event.created_at * 1000,
@@ -65,6 +67,7 @@ export async function publishWorkspaceAccessSnapshot(
     created_at: Math.floor(Date.now() / 1000),
     tags: [
       ['workspace', snapshot.workspaceId],
+      ...(snapshot.pageId ? [['page', snapshot.pageId] as [string, string]] : []),
       ...contentSnapshot.collaboratorPubkeys.map((pubkey) => ['p', pubkey] as [string, string]),
     ],
     content: JSON.stringify(contentSnapshot),
@@ -80,7 +83,7 @@ export async function publishWorkspaceAccessSnapshot(
   }
 }
 
-export async function loadWorkspaceAccessWorkspaces(pubkey: string, relayUrls: string[]): Promise<WorkspaceAccessSnapshot[]> {
+export async function loadWorkspaceAccessSnapshots(pubkey: string, relayUrls: string[]): Promise<WorkspaceAccessSnapshot[]> {
   const relays = uniqueRelayUrls(relayUrls)
   if (!pubkey || relays.length === 0) return []
 
@@ -117,4 +120,8 @@ export async function loadWorkspaceAccessWorkspaces(pubkey: string, relayUrls: s
   } finally {
     pool.close(relays)
   }
+}
+
+export async function loadWorkspaceAccessWorkspaces(pubkey: string, relayUrls: string[]): Promise<WorkspaceAccessSnapshot[]> {
+  return (await loadWorkspaceAccessSnapshots(pubkey, relayUrls)).filter((snapshot) => !snapshot.pageId)
 }

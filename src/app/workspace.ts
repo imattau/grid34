@@ -194,6 +194,18 @@ function loadRevisionHistory(revisionsKey: string): RevisionHistoryState {
   }
 }
 
+function loadWorkspaceList(): string[] {
+  const stored = localStorage.getItem('grid34_workspaces')
+  if (!stored) return []
+
+  try {
+    const parsed = JSON.parse(stored) as string[]
+    return Array.from(new Set(parsed.filter((value) => typeof value === 'string' && value.trim().length > 0)))
+  } catch {
+    return []
+  }
+}
+
 function persistRevisionHistory(revisions: RevisionHistoryState, revisionsKey: string): void {
   localStorage.setItem(revisionsKey, JSON.stringify(revisions))
 }
@@ -277,8 +289,11 @@ export async function createWorkspace(): Promise<Workspace> {
   const db = new SQL.Database()
   db.run(CREATE_SCHEMA_SQL)
 
+  const storedActiveRepoId = typeof window !== 'undefined' ? localStorage.getItem('grid34_active_repo_id') : null
   const repoId =
-    (typeof window !== 'undefined' && localStorage.getItem('grid34_active_repo_id')) || 'workspace-repo'
+    storedActiveRepoId ||
+    loadWorkspaceList()[0] ||
+    'workspace-repo'
   const stateKey = `grid34_state_${repoId}`
   const cekKey = `grid34_cek_${repoId}`
   const signingKey = `grid34_signing_key_${repoId}`

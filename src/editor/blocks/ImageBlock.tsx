@@ -1,8 +1,8 @@
-import { useEffect, useState } from 'react'
-import type { Block } from '../../storage/repo/types'
+import { useEffect, useMemo, useState } from 'react'
 import type { BlockProps } from './ParagraphBlock'
 import { useDraftStore } from '../contexts/storeContexts'
 import { encryptContent, decryptContent } from '../../storage/crypto/cryptoBox'
+import { buildMediaServerTargets, chooseFirstServedUrl, resolveMediaServerLists, type MediaServerKind, type MediaServerTarget } from './mediaServers'
 
 // Helper to convert buffer to hex string
 function bufferToHex(buffer: ArrayBuffer): string {
@@ -51,18 +51,38 @@ export function ImageBlock({ block, pageId }: BlockProps) {
 
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [mediaServers, setMediaServers] = useState({ blossom: [] as string[], nip96: [] as string[] })
   const [decryptedSrc, setDecryptedSrc] = useState<string | null>(null)
   const [decrypting, setDecrypting] = useState(false)
 
-  const [serverType, setServerType] = useState<'blossom' | 'nip96'>('blossom')
-  const [serverUrl, setServerUrl] = useState('https://blossom.primal.net')
-
   const url = block.content.url as string | undefined
   const caption = (block.content.caption as string) || ''
+  const mirrorUrls = useMemo(() => {
+    const stored = block.content.mirrorUrls
+    if (!Array.isArray(stored)) return []
+    return stored.filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+  }, [block.content.mirrorUrls])
+
+  const uploadedFrom = useMemo(
+    () => [url, ...mirrorUrls].filter((value): value is string => typeof value === 'string' && value.trim().length > 0),
+    [url, mirrorUrls]
+  )
+
+  useEffect(() => {
+    let active = true
+    void resolveMediaServerLists().then((lists) => {
+      if (!active) return
+      setMediaServers(lists)
+    })
+    return () => {
+      active = false
+    }
+  }, [])
 
   // Automatically decrypt image if url is present
   useEffect(() => {
-    if (!url) {
+    const urls = uploadedFrom
+    if (urls.length === 0) {
       setDecryptedSrc(null)
       return
     }
@@ -77,28 +97,46 @@ export function ImageBlock({ block, pageId }: BlockProps) {
           throw new Error('No shared CEK available to decrypt this image')
         }
 
-        const res = await fetch(url)
-        if (!res.ok) {
-          throw new Error(`Failed to download encrypted image (HTTP ${res.status})`)
+        const controller = new AbortController()
+
+        const parseCandidate = async (candidateUrl: string) => {
+          const res = await fetch(candidateUrl, { signal: controller.signal })
+          if (!res.ok) {
+            throw new Error(`Failed to download encrypted image (HTTP ${res.status})`)
+          }
+
+          const ciphertext = await res.text()
+          const plaintext = decryptContent(ciphertext, cek)
+
+          let parsed: { mimeType: string; data: string }
+          try {
+            parsed = JSON.parse(plaintext)
+          } catch {
+            // If it is not JSON, assume raw base64 data
+            parsed = { mimeType: 'image/png', data: plaintext }
+          }
+
+          return parsed.data.startsWith('data:') ? parsed.data : `data:${parsed.mimeType};base64,${parsed.data}`
         }
 
-        const ciphertext = await res.text()
-        const plaintext = decryptContent(ciphertext, cek)
-
-        let parsed: { mimeType: string; data: string }
-        try {
-          parsed = JSON.parse(plaintext)
-        } catch {
-          // If it is not JSON, assume raw base64 data
-          parsed = { mimeType: 'image/png', data: plaintext }
-        }
-
+        const firstServed = await Promise.any(
+          urls.map(async (candidateUrl) => {
+            const value = await parseCandidate(candidateUrl)
+            controller.abort()
+            return value
+          })
+        )
         if (active) {
-          setDecryptedSrc(parsed.data.startsWith('data:') ? parsed.data : `data:${parsed.mimeType};base64,${parsed.data}`)
+          setDecryptedSrc(firstServed)
         }
       } catch (err: any) {
         if (active) {
-          setError(err.message || String(err))
+          const message = err instanceof AggregateError && Array.isArray(err.errors) && err.errors.length > 0
+            ? err.errors[0] instanceof Error
+              ? err.errors[0].message
+              : String(err.errors[0])
+            : err.message || String(err)
+          setError(message)
         }
       } finally {
         if (active) {
@@ -112,7 +150,93 @@ export function ImageBlock({ block, pageId }: BlockProps) {
     return () => {
       active = false
     }
-  }, [url, cek])
+  }, [uploadedFrom, cek])
+
+  async function uploadToBlossom(target: string, blob: Blob, fileHash: string, now: number): Promise<string> {
+    const uploadUrl = `${target.replace(/\/$/, '')}/upload`
+    const authEventTemplate = {
+      kind: 24242,
+      created_at: now,
+      tags: [
+        ['t', 'upload'],
+        ['x', fileHash],
+        ['expiration', String(now + 300)],
+      ],
+      content: 'Upload encrypted grid34 media file',
+    }
+
+    const signedEvent = await signAuthEvent(authEventTemplate)
+    const base64Auth = btoa(JSON.stringify(signedEvent))
+
+    const response = await fetch(uploadUrl, {
+      method: 'PUT',
+      headers: {
+        Authorization: `Nostr ${base64Auth}`,
+      },
+      body: blob,
+    })
+
+    if (!response.ok) {
+      const errText = await response.text()
+      throw new Error(`Blossom upload failed (${response.status}): ${errText}`)
+    }
+
+    const resData = await response.json()
+    return typeof resData.url === 'string' && resData.url.trim().length > 0
+      ? resData.url
+      : `${target.replace(/\/$/, '')}/${fileHash}`
+  }
+
+  async function uploadToNip96(target: string, blob: Blob, now: number): Promise<string> {
+    const configUrl = `${target.replace(/\/$/, '')}/.well-known/nostr/nip96.json`
+    const configRes = await fetch(configUrl)
+    if (!configRes.ok) {
+      throw new Error(`Failed to load NIP-96 configuration from ${configUrl}`)
+    }
+    const config = await configRes.json()
+    const apiUrl = config.api_url
+    if (!apiUrl) {
+      throw new Error('NIP-96 config is missing api_url')
+    }
+
+    const authEventTemplate = {
+      kind: 27235,
+      created_at: now,
+      tags: [
+        ['u', apiUrl],
+        ['method', 'POST'],
+      ],
+      content: 'Upload encrypted grid34 media file via NIP-96',
+    }
+
+    const signedEvent = await signAuthEvent(authEventTemplate)
+    const base64Auth = btoa(JSON.stringify(signedEvent))
+
+    const formData = new FormData()
+    formData.append('file', blob, 'encrypted_image.txt')
+
+    const response = await fetch(apiUrl, {
+      method: 'POST',
+      headers: {
+        Authorization: `Nostr ${base64Auth}`,
+      },
+      body: formData,
+    })
+
+    if (!response.ok) {
+      const errText = await response.text()
+      throw new Error(`NIP-96 upload failed (${response.status}): ${errText}`)
+    }
+
+    const resData = await response.json()
+    if (resData.status === 'success' && resData.nip96?.url) {
+      return resData.nip96.url
+    }
+    if (resData.url) {
+      return resData.url
+    }
+    throw new Error('Upload succeeded but no file URL was returned by server.')
+  }
 
   // Handle uploading of file
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -150,100 +274,43 @@ export function ImageBlock({ block, pageId }: BlockProps) {
       // 3. Compute hash and build auth token
       const fileHash = await sha256(ciphertext)
       const now = Math.floor(Date.now() / 1000)
+      const resolvedTargets = buildMediaServerTargets(mediaServers, {
+        kind: 'blossom',
+        url: 'https://blossom.primal.net',
+      })
+      const uploadTargets = resolvedTargets.length > 0
+        ? resolvedTargets
+        : [{ kind: 'blossom' as MediaServerKind, url: 'https://blossom.primal.net' }]
 
-      let uploadUrl = serverUrl.replace(/\/$/, '')
-      let finalFileUrl = ''
-
-      if (serverType === 'blossom') {
-        uploadUrl = `${uploadUrl}/upload`
-        
-        const authEventTemplate = {
-          kind: 24242,
-          created_at: now,
-          tags: [
-            ['t', 'upload'],
-            ['x', fileHash],
-            ['expiration', String(now + 300)],
-          ],
-          content: 'Upload encrypted grid34 media file',
-        }
-
-        const signedEvent = await signAuthEvent(authEventTemplate)
-        const base64Auth = btoa(JSON.stringify(signedEvent))
-
-        const response = await fetch(uploadUrl, {
-          method: 'PUT',
-          headers: {
-            'Authorization': `Nostr ${base64Auth}`,
-          },
-          body: blob,
+      const settled = await Promise.allSettled(
+        uploadTargets.map(async (target: MediaServerTarget) => {
+          if (target.kind === 'blossom') {
+            return await uploadToBlossom(target.url, blob, fileHash, now)
+          }
+          return await uploadToNip96(target.url, blob, now)
         })
+      )
 
-        if (!response.ok) {
-          const errText = await response.text()
-          throw new Error(`Blossom upload failed (${response.status}): ${errText}`)
-        }
+      const successfulUrls = settled
+        .filter((result): result is PromiseFulfilledResult<string> => result.status === 'fulfilled')
+        .map((result) => result.value)
 
-        const resData = await response.json()
-        finalFileUrl = resData.url || `${serverUrl.replace(/\/$/, '')}/${fileHash}`
-      } else {
-        // NIP-96 Upload
-        // A. Resolve api_url from config
-        const configUrl = `${uploadUrl}/.well-known/nostr/nip96.json`
-        const configRes = await fetch(configUrl)
-        if (!configRes.ok) {
-          throw new Error(`Failed to load NIP-96 configuration from ${configUrl}`)
-        }
-        const config = await configRes.json()
-        const apiUrl = config.api_url
-        if (!apiUrl) {
-          throw new Error('NIP-96 config is missing api_url')
-        }
-
-        const authEventTemplate = {
-          kind: 27235,
-          created_at: now,
-          tags: [
-            ['u', apiUrl],
-            ['method', 'POST'],
-          ],
-          content: 'Upload encrypted grid34 media file via NIP-96',
-        }
-
-        const signedEvent = await signAuthEvent(authEventTemplate)
-        const base64Auth = btoa(JSON.stringify(signedEvent))
-
-        const formData = new FormData()
-        formData.append('file', blob, 'encrypted_image.txt')
-
-        const response = await fetch(apiUrl, {
-          method: 'POST',
-          headers: {
-            'Authorization': `Nostr ${base64Auth}`,
-          },
-          body: formData,
-        })
-
-        if (!response.ok) {
-          const errText = await response.text()
-          throw new Error(`NIP-96 upload failed (${response.status}): ${errText}`)
-        }
-
-        const resData = await response.json()
-        if (resData.status === 'success' && resData.nip96?.url) {
-          finalFileUrl = resData.nip96.url
-        } else if (resData.url) {
-          finalFileUrl = resData.url
-        } else {
-          throw new Error('Upload succeeded but no file URL was returned by server.')
-        }
+      if (successfulUrls.length === 0) {
+        const failureMessages = settled
+          .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+          .map((result) => result.reason instanceof Error ? result.reason.message : String(result.reason))
+        throw new Error(failureMessages[0] || 'Upload failed on all media servers.')
       }
+
+      const mirroredUrls = Array.from(new Set(successfulUrls))
+      const finalFileUrl = chooseFirstServedUrl(mirroredUrls)
 
       // 4. Update block with the URL
       draftStore.stage(pageId, block.id, {
         ...block.content,
         type: 'image',
         url: finalFileUrl,
+        mirrorUrls: mirroredUrls,
         caption: file.name,
       })
 
@@ -259,6 +326,7 @@ export function ImageBlock({ block, pageId }: BlockProps) {
       ...block.content,
       type: 'image',
       url: undefined,
+      mirrorUrls: [],
       caption: '',
     })
     setDecryptedSrc(null)
@@ -315,48 +383,26 @@ export function ImageBlock({ block, pageId }: BlockProps) {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-lg mx-auto w-full">
-        <div className="flex flex-col gap-1.5">
-          <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Server Type</label>
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={() => {
-                setServerType('blossom')
-                setServerUrl('https://blossom.primal.net')
-              }}
-              className={`flex-1 py-1.5 text-xs font-semibold rounded-lg border transition-all ${
-                serverType === 'blossom'
-                  ? 'bg-gray-950 text-white border-gray-950 dark:bg-white dark:text-gray-950'
-                  : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50 dark:bg-gray-850 dark:text-gray-300 dark:border-gray-850'
-              }`}
-            >
-              Blossom
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setServerType('nip96')
-                setServerUrl('https://void.cat')
-              }}
-              className={`flex-1 py-1.5 text-xs font-semibold rounded-lg border transition-all ${
-                serverType === 'nip96'
-                  ? 'bg-gray-950 text-white border-gray-950 dark:bg-white dark:text-gray-950'
-                  : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50 dark:bg-gray-850 dark:text-gray-300 dark:border-gray-850'
-              }`}
-            >
-              NIP-96
-            </button>
-          </div>
-        </div>
-
-        <div className="flex flex-col gap-1.5">
-          <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Server URL</label>
-          <input
-            type="url"
-            value={serverUrl}
-            onChange={(e) => setServerUrl(e.target.value)}
-            className="w-full text-xs border border-gray-200 dark:border-gray-800 rounded-lg px-3 py-1.5 bg-white dark:bg-gray-950 outline-none focus:ring-1 focus:ring-gray-300 text-gray-700 dark:text-gray-200"
-          />
+        <div className="flex flex-col gap-1.5 md:col-span-2">
+          <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Media Servers</label>
+          {mediaServers.blossom.length > 0 || mediaServers.nip96.length > 0 ? (
+            <div className="rounded-lg border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-950 px-3 py-2 text-xs text-gray-600 dark:text-gray-300">
+              <div className="font-semibold text-gray-800 dark:text-gray-100">Using your Nostr media server lists</div>
+              <div className="mt-1">
+                Blossom: {mediaServers.blossom.length > 0 ? mediaServers.blossom.join(', ') : 'none'}
+              </div>
+              <div className="mt-1">
+                NIP-96: {mediaServers.nip96.length > 0 ? mediaServers.nip96.join(', ') : 'none'}
+              </div>
+              <p className="mt-2 text-[11px] text-gray-400 dark:text-gray-500">
+                The image will upload to every available server and open from the first mirror that responds.
+              </p>
+            </div>
+          ) : (
+            <div className="rounded-lg border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-950 px-3 py-2 text-xs text-gray-600 dark:text-gray-300">
+              No media server list was found in your Nostr environment. The uploader will fall back to the configured Blossom server.
+            </div>
+          )}
         </div>
       </div>
 

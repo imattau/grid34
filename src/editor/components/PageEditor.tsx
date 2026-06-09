@@ -6,7 +6,12 @@ import { BlockChrome } from './BlockChrome'
 import { SlashMenu, type SlashMenuItem } from './SlashMenu'
 import { restoreBlockEditorFocus } from './focusBlockEditor'
 import { loadNostrContacts, type NostrContact } from '../contacts/nostrContacts'
-import { loadPageCollaborators, loadWorkspaceOwnerPubkey, savePageCollaborators } from '../contacts/pageCollaborators'
+import {
+  loadPageCollaborators,
+  loadPageCollaboratorsFromNostr,
+  loadWorkspaceOwnerPubkey,
+  savePageCollaborators,
+} from '../contacts/pageCollaborators'
 import { publishWorkspaceAccessSnapshot } from '../contacts/workspaceAccess'
 import type { Page, Block } from '../../storage/repo/types'
 import type { DraftMap } from '../stores/draftStore'
@@ -162,7 +167,7 @@ export function PageEditor({
 
   const workspaceId =
     workspaceIdProp ??
-    ((typeof window !== 'undefined' && localStorage.getItem('grid34_active_repo_id')) || 'workspace-repo')
+    'workspace-repo'
   const resolvedUserPubkey = currentUserPubkey ?? readStoredNostrPubkey()
   const workspaceOwnerPubkey = loadWorkspaceOwnerPubkey(workspaceId)
   const canEdit =
@@ -260,6 +265,28 @@ export function PageEditor({
   }, [pageId, workspaceId])
 
   useEffect(() => {
+    if (!resolvedUserPubkey) return
+    if (import.meta.env.VITEST) return
+    if (relayUrlsProp.length === 0 && typeof window === 'undefined') return
+
+    let cancelled = false
+    void loadPageCollaboratorsFromNostr(workspaceId, pageId, resolvedUserPubkey, relayUrlsProp)
+      .then((nextInvited) => {
+        if (cancelled) return
+        setInvitedPubkeys(nextInvited)
+        savePageCollaborators(workspaceId, pageId, nextInvited)
+      })
+      .catch((error) => {
+        if (cancelled) return
+        console.warn('Failed to load page collaborators from Nostr', error)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [pageId, relayUrlsProp, resolvedUserPubkey, workspaceId])
+
+  useEffect(() => {
     if (!pendingFocusBlockId) return
     const pageBlocks = observation.page?.blocks ?? []
     if (!pageBlocks.some((block) => block.id === pendingFocusBlockId)) return
@@ -286,16 +313,6 @@ export function PageEditor({
     const pubkey = resolvedUserPubkey
 
     let relayUrls = relayUrlsProp
-    if (relayUrls.length === 0 && typeof window !== 'undefined') {
-      const storedRelays = localStorage.getItem('nostr_relays')
-      if (storedRelays) {
-        try {
-          relayUrls = JSON.parse(storedRelays) as string[]
-        } catch {
-          relayUrls = []
-        }
-      }
-    }
     if (relayUrls.length === 0) {
       relayUrls = DEFAULT_CONTACT_RELAYS
     }
@@ -535,8 +552,17 @@ export function PageEditor({
 
     if (resolvedUserPubkey) {
       const updatedAt = Date.now()
+      const workspaceCollaborators = Array.from(new Set([resolvedUserPubkey, ...next]))
       void publishWorkspaceAccessSnapshot(relayUrlsProp, {
         workspaceId,
+        collaboratorPubkeys: workspaceCollaborators,
+        ownerPubkey: workspaceOwnerPubkey ?? resolvedUserPubkey,
+        updatedAt,
+      })
+
+      void publishWorkspaceAccessSnapshot(relayUrlsProp, {
+        workspaceId,
+        pageId,
         collaboratorPubkeys: Array.from(new Set([resolvedUserPubkey, ...next])),
         ownerPubkey: workspaceOwnerPubkey ?? resolvedUserPubkey,
         updatedAt,
@@ -545,6 +571,7 @@ export function PageEditor({
       if (isRemoving) {
         void publishWorkspaceAccessSnapshot(relayUrlsProp, {
           workspaceId,
+          pageId,
           collaboratorPubkeys: [pubkey],
           ownerPubkey: workspaceOwnerPubkey ?? resolvedUserPubkey,
           updatedAt: updatedAt + 1,

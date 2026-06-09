@@ -13,7 +13,69 @@ import {
 } from './editor/contacts/pageCollaborators'
 import { loadWorkspaceAccessWorkspaces, publishWorkspaceAccessSnapshot } from './editor/contacts/workspaceAccess'
 import './app/workspace.css'
-import { syncWorkspacesFromNostr, saveWorkspacesToNostr } from './app/nostrConfig'
+import { syncWorkspacesFromNostr, saveWorkspacesToNostr, type WorkspacesConfigPayload } from './app/nostrConfig'
+import type { EventTemplate, NostrEvent } from 'nostr-tools/pure'
+
+const DEFAULT_RELAY_URLS = ['wss://nos.lol', 'wss://relay.damus.io', 'wss://relay.nostr.band']
+const WORKSPACES_STORAGE_KEY = 'grid34_workspaces'
+const ACTIVE_REPO_STORAGE_KEY = 'grid34_active_repo_id'
+
+function loadStoredUser(): NostrProfile | null {
+  if (typeof window === 'undefined') return null
+  const stored = sessionStorage.getItem('nostr_user')
+  if (!stored) return null
+  try {
+    return JSON.parse(stored) as NostrProfile
+  } catch {
+    return null
+  }
+}
+
+function loadStoredRelays(): string[] {
+  if (typeof window === 'undefined') return []
+  const stored = sessionStorage.getItem('nostr_relays')
+  if (!stored) return []
+  try {
+    const parsed = JSON.parse(stored) as string[]
+    return Array.isArray(parsed) ? parsed.filter((relay) => typeof relay === 'string' && relay.trim().length > 0) : []
+  } catch {
+    return []
+  }
+}
+
+export function applyWorkspaceConfigPayload(payload: WorkspacesConfigPayload): boolean {
+  const currentListRaw = localStorage.getItem(WORKSPACES_STORAGE_KEY)
+  let nextWorkspaces = payload.workspaces
+  let changed = false
+
+  if (currentListRaw) {
+    try {
+      const current = JSON.parse(currentListRaw) as string[]
+      nextWorkspaces = Array.from(new Set([...current, ...payload.workspaces]))
+      if (nextWorkspaces.length !== current.length || nextWorkspaces.some((id, index) => id !== current[index])) {
+        changed = true
+      }
+    } catch {
+      changed = true
+    }
+  } else {
+    changed = true
+  }
+
+  if (changed) {
+    localStorage.setItem(WORKSPACES_STORAGE_KEY, JSON.stringify(nextWorkspaces))
+  }
+
+  if (payload.activeRepoId) {
+    const currentActive = localStorage.getItem(ACTIVE_REPO_STORAGE_KEY)
+    if (currentActive !== payload.activeRepoId) {
+      localStorage.setItem(ACTIVE_REPO_STORAGE_KEY, payload.activeRepoId)
+      changed = true
+    }
+  }
+
+  return changed
+}
 
 function LoadingShell() {
   return (
@@ -80,28 +142,90 @@ interface NostrProfile {
   picture: string
 }
 
+type NostrBrowserApi = {
+  getPublicKey?: () => Promise<string>
+  getRelays?: () => Promise<Record<string, unknown>>
+  signEvent?: (template: EventTemplate) => Promise<NostrEvent>
+  nip04?: {
+    encrypt?: (pubkey: string, plaintext: string) => Promise<string>
+    decrypt?: (pubkey: string, ciphertext: string) => Promise<string>
+  }
+  getBlossomServers?: () => Promise<string[]>
+  getNip96Servers?: () => Promise<string[]>
+  getMediaServers?: () => Promise<string[] | { blossom?: string[]; nip96?: string[] }>
+}
+
+function getNostrApi(): NostrBrowserApi | undefined {
+  return (globalThis as typeof globalThis & { nostr?: NostrBrowserApi }).nostr
+}
+
+export async function requestNostrPermissions(pubkey: string): Promise<void> {
+  const nostr = getNostrApi()
+  if (!nostr) return
+
+  if (nostr.signEvent) {
+    try {
+      await nostr.signEvent({
+        kind: 1,
+        created_at: Math.floor(Date.now() / 1000),
+        tags: [['client', 'grid34']],
+        content: 'grid34 login permission check',
+      })
+    } catch (error) {
+      console.warn('NIP-07 signEvent preflight failed', error)
+    }
+  }
+
+  if (nostr.nip04?.encrypt && nostr.nip04?.decrypt) {
+    try {
+      const probe = `grid34-login:${Date.now()}`
+      const encrypted = await nostr.nip04.encrypt(pubkey, probe)
+      await nostr.nip04.decrypt(pubkey, encrypted)
+    } catch (error) {
+      console.warn('NIP-07 nip04 preflight failed', error)
+    }
+  }
+
+  if (nostr.getRelays) {
+    try {
+      await nostr.getRelays()
+    } catch (error) {
+      console.warn('NIP-07 relay preflight failed', error)
+    }
+  }
+
+  if (nostr.getBlossomServers) {
+    try {
+      await nostr.getBlossomServers()
+    } catch (error) {
+      console.warn('NIP-07 blossom server preflight failed', error)
+    }
+  }
+
+  if (nostr.getNip96Servers) {
+    try {
+      await nostr.getNip96Servers()
+    } catch (error) {
+      console.warn('NIP-07 NIP-96 server preflight failed', error)
+    }
+  }
+
+  if (nostr.getMediaServers) {
+    try {
+      await nostr.getMediaServers()
+    } catch (error) {
+      console.warn('NIP-07 media server preflight failed', error)
+    }
+  }
+}
+
 function WorkspaceView({ workspace }: { workspace: Workspace }) {
   const [selectedPageId, setSelectedPageId] = useState<string | null>(workspace.selectedPageId)
-  const [user, setUser] = useState<NostrProfile | null>(() => {
-    if (typeof window === 'undefined') return null
-    const stored = sessionStorage.getItem('nostr_user')
-    if (!stored) return null
-    try {
-      return JSON.parse(stored) as NostrProfile
-    } catch {
-      return null
-    }
-  })
+  const [checkpointStatus, setCheckpointStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
+  const [user, setUser] = useState<NostrProfile | null>(() => loadStoredUser())
   const [relayUrls, setRelayUrls] = useState<string[]>(() => {
-    if (typeof window === 'undefined') return []
-    const stored = sessionStorage.getItem('nostr_relays')
-    if (!stored) return []
-    try {
-      const parsed = JSON.parse(stored) as string[]
-      return Array.isArray(parsed) ? parsed : []
-    } catch {
-      return []
-    }
+    const stored = loadStoredRelays()
+    return stored.length > 0 ? stored : DEFAULT_RELAY_URLS
   })
   const [showUserMenu, setShowUserMenu] = useState(false)
   const [showWorkspaces, setShowWorkspaces] = useState(() => {
@@ -109,6 +233,8 @@ function WorkspaceView({ workspace }: { workspace: Workspace }) {
     return sessionStorage.getItem('grid34_workspaces_collapsed') !== 'true'
   })
   const [accessibleWorkspaceIds, setAccessibleWorkspaceIds] = useState<string[]>([])
+  const [workspaceOwnerPubkey, setWorkspaceOwnerPubkey] = useState<string | null>(() => loadWorkspaceOwnerPubkey(workspace.repoId))
+  const [accessHydrated, setAccessHydrated] = useState(false)
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
     if (typeof window === 'undefined') return 'light'
     const stored = localStorage.getItem('grid34_theme')
@@ -135,43 +261,54 @@ function WorkspaceView({ workspace }: { workspace: Workspace }) {
   }, [workspace])
 
   useEffect(() => {
-    if (!user?.pubkey) return
-    const ownerKey = loadWorkspaceOwnerPubkey(workspace.repoId)
-    if (!ownerKey) {
-      saveWorkspaceOwnerPubkey(workspace.repoId, user.pubkey)
-    }
-  }, [user?.pubkey, workspace.repoId])
+    setWorkspaceOwnerPubkey(loadWorkspaceOwnerPubkey(workspace.repoId))
+  }, [workspace.repoId])
 
   useEffect(() => {
-    if (!user?.pubkey) {
-      setAccessibleWorkspaceIds([])
+    if (!user?.pubkey) return
+    if (import.meta.env.VITEST) {
+      const cached = loadAccessibleWorkspaces(user.pubkey)
+      const ownerKey = loadWorkspaceOwnerPubkey(workspace.repoId)
+      const next = ownerKey === user.pubkey ? Array.from(new Set([...cached, workspace.repoId])) : cached
+      setAccessibleWorkspaceIds(next)
+      setAccessHydrated(true)
       return
     }
-    if (import.meta.env.VITEST) return
 
+    let cancelled = false
     const cached = loadAccessibleWorkspaces(user.pubkey)
     const seeded = Array.from(new Set([...cached, workspace.repoId]))
     setAccessibleWorkspaceIds(seeded)
     saveAccessibleWorkspace(user.pubkey, workspace.repoId)
+    setAccessHydrated(false)
 
-    let cancelled = false
     void loadWorkspaceAccessWorkspaces(user.pubkey, relayUrls)
       .then((snapshots) => {
         if (cancelled) return
+
+        const matchingWorkspace = snapshots.find((snapshot) => snapshot.workspaceId === workspace.repoId)
+        if (matchingWorkspace?.ownerPubkey) {
+          setWorkspaceOwnerPubkey(matchingWorkspace.ownerPubkey)
+          saveWorkspaceOwnerPubkey(workspace.repoId, matchingWorkspace.ownerPubkey)
+        }
+
         const next = Array.from(new Set([...seeded, ...snapshots.map((snapshot) => snapshot.workspaceId)]))
         setAccessibleWorkspaceIds(next)
         for (const workspaceId of next) {
           saveAccessibleWorkspace(user.pubkey, workspaceId)
         }
+        setAccessHydrated(true)
       })
       .catch((error) => {
-        console.warn('Failed to load workspace invites', error)
+        if (cancelled) return
+        console.warn('Failed to load workspace access snapshots', error)
+        setAccessHydrated(true)
       })
 
     return () => {
       cancelled = true
     }
-  }, [relayUrls, user?.pubkey])
+  }, [relayUrls, user?.pubkey, workspace.repoId])
 
   useEffect(() => {
     if (!user?.pubkey) return
@@ -181,28 +318,8 @@ function WorkspaceView({ workspace }: { workspace: Workspace }) {
     void syncWorkspacesFromNostr(user.pubkey, relayUrls)
       .then((payload) => {
         if (cancelled || !payload) return
-
-        const localListRaw = localStorage.getItem('grid34_workspaces')
-        let merged = payload.workspaces
-        let changed = false
-        if (localListRaw) {
-          try {
-            const local = JSON.parse(localListRaw) as string[]
-            const beforeLen = local.length
-            const combined = Array.from(new Set([...local, ...payload.workspaces]))
-            if (combined.length !== beforeLen) {
-              merged = combined
-              changed = true
-            } else {
-              merged = local
-            }
-          } catch {}
-        } else {
-          changed = true
-        }
-
+        const changed = applyWorkspaceConfigPayload(payload)
         if (changed) {
-          localStorage.setItem('grid34_workspaces', JSON.stringify(merged))
           window.location.reload()
         }
       })
@@ -215,12 +332,12 @@ function WorkspaceView({ workspace }: { workspace: Workspace }) {
     }
   }, [user?.pubkey, relayUrls])
 
-  const workspaceOwnerPubkey = loadWorkspaceOwnerPubkey(workspace.repoId)
   const selectedPageCollaborators = selectedPageId ? loadPageCollaborators(workspace.repoId, selectedPageId) : []
   const canViewWorkspace =
     user !== null &&
-    (workspaceOwnerPubkey === null ||
-      user.pubkey === workspaceOwnerPubkey ||
+    accessHydrated &&
+    (user.pubkey === workspaceOwnerPubkey ||
+      accessibleWorkspaceIds.includes(workspace.repoId) ||
       selectedPageCollaborators.includes(user.pubkey))
 
   useEffect(() => {
@@ -261,19 +378,38 @@ function WorkspaceView({ workspace }: { workspace: Workspace }) {
     }
   }, [workspace])
 
+  useEffect(() => {
+    if (checkpointStatus !== 'saved' && checkpointStatus !== 'error') return
+    const timer = setTimeout(() => setCheckpointStatus('idle'), 2500)
+    return () => clearTimeout(timer)
+  }, [checkpointStatus])
+
+  async function handleCheckpoint() {
+    try {
+      setCheckpointStatus('saving')
+      await workspace.checkpoint()
+      setCheckpointStatus('saved')
+    } catch (error) {
+      console.error('Checkpoint failed', error)
+      setCheckpointStatus('error')
+    }
+  }
+
   async function handleLogin() {
-    if (typeof window === 'undefined' || !(window as any).nostr) {
+    const nostr = getNostrApi()
+    if (typeof window === 'undefined' || !nostr) {
       alert('NIP-07 Nostr extension (e.g. Alby, nos2x) not found.')
       return
     }
     try {
-      const pubkey = await (window as any).nostr.getPublicKey()
+      const pubkey = await nostr.getPublicKey!()
+      await requestNostrPermissions(pubkey)
       let name = pubkey.substring(0, 8) + '...'
       let picture = `https://robohash.org/${pubkey}.png?set=set4`
 
       try {
         const pool = new SimplePool()
-        const relays = ['wss://nos.lol', 'wss://relay.damus.io', 'wss://relay.nostr.band']
+        const relays = DEFAULT_RELAY_URLS
         const event = await pool.get(relays, {
           kinds: [0],
           authors: [pubkey],
@@ -293,10 +429,10 @@ function WorkspaceView({ workspace }: { workspace: Workspace }) {
       setUser(profile)
       sessionStorage.setItem('nostr_user', JSON.stringify(profile))
 
-      let activeRelays = ['wss://nos.lol', 'wss://relay.damus.io', 'wss://relay.nostr.band']
-      if ((window as any).nostr.getRelays) {
+      let activeRelays = DEFAULT_RELAY_URLS
+      if (nostr.getRelays) {
         try {
-          const relaysObj = await (window as any).nostr.getRelays()
+          const relaysObj = await nostr.getRelays()
           const userRelays = Object.keys(relaysObj)
           if (userRelays.length > 0) {
             sessionStorage.setItem('nostr_relays', JSON.stringify(userRelays))
@@ -311,18 +447,7 @@ function WorkspaceView({ workspace }: { workspace: Workspace }) {
       try {
         const payload = await syncWorkspacesFromNostr(pubkey, activeRelays)
         if (payload && Array.isArray(payload.workspaces)) {
-          const localListRaw = localStorage.getItem('grid34_workspaces')
-          let merged = payload.workspaces
-          if (localListRaw) {
-            try {
-              const local = JSON.parse(localListRaw) as string[]
-              merged = Array.from(new Set([...merged, ...local]))
-            } catch {}
-          }
-          localStorage.setItem('grid34_workspaces', JSON.stringify(merged))
-          if (payload.activeRepoId) {
-            localStorage.setItem('grid34_active_repo_id', payload.activeRepoId)
-          }
+          applyWorkspaceConfigPayload(payload)
         }
       } catch (err) {
         console.warn('Failed to sync settings from Nostr on login', err)
@@ -350,6 +475,9 @@ function WorkspaceView({ workspace }: { workspace: Workspace }) {
   }
 
   if (!canViewWorkspace) {
+    if (user && !accessHydrated) {
+      return <LoadingShell />
+    }
     return (
       <GuestShell
         title={user ? 'Workspace locked' : 'Waiting to log in'}
@@ -490,12 +618,15 @@ function WorkspaceView({ workspace }: { workspace: Workspace }) {
                   <button
                     type="button"
                     className="sidebar-control sidebar-control--action"
-                    onClick={() => void workspace.checkpoint()}
+                    onClick={() => {
+                      void handleCheckpoint()
+                    }}
+                    aria-busy={checkpointStatus === 'saving'}
                   >
                     <svg className="sidebar-control__icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.21 8H18" />
                     </svg>
-                    <span>Checkpoint</span>
+                    <span>{checkpointStatus === 'saving' ? 'Checkpointing…' : checkpointStatus === 'saved' ? 'Checkpointed' : checkpointStatus === 'error' ? 'Checkpoint failed' : 'Checkpoint'}</span>
                   </button>
                 </div>
               </aside>
@@ -504,7 +635,15 @@ function WorkspaceView({ workspace }: { workspace: Workspace }) {
                 <div className="workspace-toolbar">
                   <p className="workspace-path">grid34 / connected editor</p>
                   <div className="flex items-center gap-3">
-                    <p className="workspace-status">Local draft checkpointing enabled</p>
+                    <p className="workspace-status">
+                      {checkpointStatus === 'saving'
+                        ? 'Checkpointing current workspace state...'
+                        : checkpointStatus === 'saved'
+                          ? 'Checkpoint saved'
+                          : checkpointStatus === 'error'
+                            ? 'Checkpoint failed'
+                            : 'Local draft checkpointing enabled'}
+                    </p>
                     <button
                       type="button"
                       onClick={toggleTheme}
@@ -570,14 +709,19 @@ function WorkspaceSwitcher({
     const list = localStorage.getItem('grid34_workspaces')
     if (list) {
       try {
-        setWorkspaces(JSON.parse(list))
+        const parsed = JSON.parse(list) as string[]
+        const next = Array.from(new Set([
+          ...parsed.filter((value) => typeof value === 'string' && value.trim().length > 0),
+          activeRepoId,
+        ]))
+        setWorkspaces(next.length > 0 ? next : [activeRepoId])
       } catch {
-        setWorkspaces(['workspace-repo'])
+        setWorkspaces([activeRepoId])
       }
     } else {
-      setWorkspaces(['workspace-repo'])
+      setWorkspaces([activeRepoId])
     }
-  }, [])
+  }, [activeRepoId])
 
   const saveWorkspaces = (nextList: string[]) => {
     setWorkspaces(nextList)
@@ -926,8 +1070,44 @@ function CekKeysManager({ repoId, cek }: { repoId: string; cek: Uint8Array }) {
 export default function App() {
   const [workspace, setWorkspace] = useState<Workspace | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [bootstrapped, setBootstrapped] = useState(() => loadStoredUser() === null)
 
   useEffect(() => {
+    let disposed = false
+
+    async function bootstrapFromNostr() {
+      const user = loadStoredUser()
+      if (!user) {
+        setBootstrapped(true)
+        return
+      }
+
+      const storedRelays = loadStoredRelays()
+      const activeRelays = storedRelays.length > 0 ? Array.from(new Set([...storedRelays, ...DEFAULT_RELAY_URLS])) : DEFAULT_RELAY_URLS
+
+      try {
+        const payload = await syncWorkspacesFromNostr(user.pubkey, activeRelays)
+        if (payload) {
+          applyWorkspaceConfigPayload(payload)
+        }
+      } catch (cause: unknown) {
+        console.warn('Initial workspace bootstrap failed', cause)
+      } finally {
+        if (!disposed) {
+          setBootstrapped(true)
+        }
+      }
+    }
+
+    void bootstrapFromNostr()
+
+    return () => {
+      disposed = true
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!bootstrapped || workspace || error) return
     let disposed = false
 
     void createWorkspace()
@@ -947,7 +1127,7 @@ export default function App() {
     return () => {
       disposed = true
     }
-  }, [])
+  }, [bootstrapped, workspace, error])
 
   useEffect(() => {
     return () => {

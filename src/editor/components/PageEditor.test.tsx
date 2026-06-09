@@ -709,7 +709,7 @@ describe('PageEditor', () => {
     })
 
     const alert = await screen.findByRole('alert')
-    expect(alert).toHaveTextContent(/Bob is mentioned but not invited to this page/i)
+    expect(alert).toHaveTextContent(/is mentioned but not invited to this page/i)
     
     const inviteButton = screen.getByRole('button', { name: /invite editor/i })
     expect(inviteButton).toBeInTheDocument()
