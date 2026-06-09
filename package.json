@@ -19,6 +19,7 @@
     "@libp2p/gossipsub": "^16.0.2",
     "@libp2p/memory": "^2.0.21",
     "@multiformats/multiaddr": "^13.0.3",
+    "@tiptap/extension-mention": "^3.26.0",
     "@tiptap/extension-task-item": "^3.26.0",
     "@tiptap/extension-task-list": "^3.26.0",
     "@tiptap/react": "^3.26.0",

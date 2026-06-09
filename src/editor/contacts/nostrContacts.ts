@@ -75,6 +75,12 @@ async function loadContactProfiles(pubkeys: string[], relayUrls: string[]): Prom
   }
 }
 
+let cachedContacts: NostrContact[] = []
+
+export function getCachedContacts(): NostrContact[] {
+  return cachedContacts
+}
+
 export async function loadNostrContacts(pubkey: string, relayUrls: string[]): Promise<NostrContact[]> {
   const uniqueRelays = Array.from(new Set(relayUrls.filter((relay) => relay.trim().length > 0)))
   if (!pubkey || uniqueRelays.length === 0) return []
@@ -89,7 +95,7 @@ export async function loadNostrContacts(pubkey: string, relayUrls: string[]): Pr
     if (!event) return []
     const contacts = parseNostrContactList(event)
     const profiles = await loadContactProfiles(contacts.map((contact) => contact.pubkey), uniqueRelays)
-    return contacts
+    const result = contacts
       .map((contact) => ({
         ...contact,
         ...profiles.get(contact.pubkey),
@@ -99,6 +105,8 @@ export async function loadNostrContacts(pubkey: string, relayUrls: string[]): Pr
         const rightLabel = right.displayName ?? right.name ?? right.petname ?? right.pubkey
         return leftLabel.localeCompare(rightLabel)
       })
+    cachedContacts = result
+    return result
   } catch (error) {
     console.warn('[NostrContacts] failed to load contact list', error)
     return []

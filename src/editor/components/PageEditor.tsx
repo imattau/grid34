@@ -50,6 +50,30 @@ function readStoredNostrPubkey(): string | null {
   }
 }
 
+function extractMentionedPubkeys(blocks: Block[]): string[] {
+  const pubkeys = new Set<string>()
+
+  function walk(node: any) {
+    if (!node) return
+    if (node.type === 'mention' && node.attrs && typeof node.attrs.id === 'string') {
+      pubkeys.add(node.attrs.id)
+    }
+    if (Array.isArray(node.content)) {
+      for (const child of node.content) {
+        walk(child)
+      }
+    }
+  }
+
+  for (const block of blocks) {
+    if (block.content && block.content.richText) {
+      walk(block.content.richText)
+    }
+  }
+
+  return Array.from(pubkeys)
+}
+
 export function PageEditor({ pageId, workspaceId: workspaceIdProp, currentUserPubkey, relayUrls: relayUrlsProp = [] }: PageEditorProps) {
   const repoStore = useRepoStore()
   const draftStore = useDraftStore()
@@ -180,7 +204,6 @@ export function PageEditor({ pageId, workspaceId: workspaceIdProp, currentUserPu
   }, [observation.page?.blocks, pendingFocusBlockId, slashMenu])
 
   useEffect(() => {
-    if (!showInviteMenu) return
     if (contactsStatus !== 'idle') return
     if (!resolvedUserPubkey) return
 
@@ -211,7 +234,7 @@ export function PageEditor({ pageId, workspaceId: workspaceIdProp, currentUserPu
         setContacts([])
         setContactsStatus('error')
       })
-  }, [contactsStatus, relayUrlsProp, resolvedUserPubkey, showInviteMenu])
+  }, [contactsStatus, relayUrlsProp, resolvedUserPubkey])
 
   if (observation.status === 'loading') {
     return <p role="status">Decrypting…</p>
@@ -227,6 +250,11 @@ export function PageEditor({ pageId, workspaceId: workspaceIdProp, currentUserPu
   const sortedBlocks = page.blocks
     .slice()
     .sort((a, b) => a.order - b.order)
+
+  const mentionedPubkeys = extractMentionedPubkeys(sortedBlocks)
+  const uninvitedMentions = mentionedPubkeys.filter(
+    (pubkey) => pubkey !== workspaceOwnerPubkey && !invitedPubkeys.includes(pubkey)
+  )
 
   let numberedListIndex = 0
 
@@ -678,6 +706,29 @@ export function PageEditor({ pageId, workspaceId: workspaceIdProp, currentUserPu
           You can view this page, but you cannot edit it until your Nostr pubkey is added to the page collaborators.
         </div>
       )}
+
+      {canEdit && uninvitedMentions.map((pubkey) => {
+        const contact = contacts.find((c) => c.pubkey === pubkey)
+        const name = contact?.displayName || contact?.name || contact?.petname || `${pubkey.slice(0, 8)}…${pubkey.slice(-4)}`
+        return (
+          <div
+            key={pubkey}
+            className="mb-4 flex items-center justify-between rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-900"
+            role="alert"
+          >
+            <span>
+              <strong>{name}</strong> is mentioned but not invited to this page.
+            </span>
+            <button
+              type="button"
+              onClick={() => handleToggleCollaborator(pubkey)}
+              className="ml-3 rounded-lg bg-blue-600 px-3 py-1 text-xs font-semibold text-white hover:bg-blue-700 transition-colors"
+            >
+              Invite Editor
+            </button>
+          </div>
+        )
+      })}
 
         <div
           className="page-editor__content flex flex-col min-w-0"

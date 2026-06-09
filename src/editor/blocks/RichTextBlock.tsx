@@ -5,6 +5,8 @@ import { useDraftStore } from '../contexts/storeContexts'
 import type { Block } from '../../storage/repo/types'
 import { serializeRichTextContent, shouldApplyIncomingRichTextContent } from './richTextSync'
 import { shouldSplitRichTextBlockOnEnter, type RichTextEnterBehavior } from './richTextEnterBehavior'
+import Mention from '@tiptap/extension-mention'
+import { mentionSuggestionConfig } from './mentionSuggestions'
 
 import TaskList from '@tiptap/extension-task-list'
 import TaskItem from '@tiptap/extension-task-item'
@@ -74,7 +76,15 @@ export function RichTextBlock({
     starterKitOptions.listItem = false
   }
 
-  const extensions = [StarterKit.configure(starterKitOptions)]
+  const extensions = [
+    StarterKit.configure(starterKitOptions),
+    Mention.configure({
+      HTMLAttributes: {
+        class: 'mention font-medium text-blue-600 bg-blue-50 px-1 rounded hover:bg-blue-100 transition-colors',
+      },
+      suggestion: mentionSuggestionConfig,
+    }),
+  ]
   if (block.type === 'todo') {
     extensions.push(TaskList)
     extensions.push(TaskItem.configure({ nested: true }))

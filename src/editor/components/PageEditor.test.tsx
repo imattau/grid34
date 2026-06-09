@@ -558,4 +558,65 @@ describe('PageEditor', () => {
     expect(screen.queryByLabelText('Paragraph text')).not.toBeInTheDocument()
     expect(screen.queryByTitle('Delete block')).not.toBeInTheDocument()
   })
+
+  it('renders an invite reminder banner with an immediate Invite Editor button for uninvited mentions', async () => {
+    const page: Page = {
+      id: 'page-1',
+      title: 'My Page',
+      parentId: null,
+      order: 0,
+      updatedAt: 1000,
+      blocks: [
+        {
+          id: 'block-1',
+          type: 'paragraph',
+          parentBlockId: null,
+          order: 0,
+          content: {
+            text: '@Bob',
+            richText: {
+              type: 'doc',
+              content: [
+                {
+                  type: 'paragraph',
+                  content: [
+                    {
+                      type: 'mention',
+                      attrs: { id: 'npub-contact-2', label: 'Bob' },
+                    },
+                  ],
+                },
+              ],
+            },
+          },
+          updatedAt: 1000,
+        },
+      ],
+    }
+
+    const repoStore: Partial<EditorRepoStore> = {
+      pageTree$: of({ pages: {} }),
+      observePage: vi.fn(() => of({ status: 'ready', page })),
+      listPageRevisions: vi.fn(() => []),
+    }
+    const draftStore: Partial<DraftStore> = { stage: vi.fn(), drafts$: of({}), flush: vi.fn() }
+    const dbViewStore: Partial<DbViewStore> = { observeRows: vi.fn(() => of([])), notifyChanged: vi.fn() }
+
+    render(
+      <RepoStoreContext.Provider value={repoStore as EditorRepoStore}>
+        <DraftStoreContext.Provider value={draftStore as DraftStore}>
+          <DbViewStoreContext.Provider value={dbViewStore as DbViewStore}>
+            <PageEditor pageId="page-1" currentUserPubkey="npub-self" />
+          </DbViewStoreContext.Provider>
+        </DraftStoreContext.Provider>
+      </RepoStoreContext.Provider>
+    )
+
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent(/Bob is mentioned but not invited to this page/i)
+    
+    const inviteButton = screen.getByRole('button', { name: /invite editor/i })
+    expect(inviteButton).toBeInTheDocument()
+    await userEvent.click(inviteButton)
+  })
 })
