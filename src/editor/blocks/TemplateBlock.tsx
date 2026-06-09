@@ -51,7 +51,7 @@ export function TemplateBlock({
           ariaLabel="Template content"
           placeholder="Template content..."
           className="w-full text-base leading-relaxed"
-          enterBehavior="split-block"
+          enterBehavior="newline"
           onSplitBlock={onSplitBlock}
           onMergeWithPrevious={onMergeWithPrevious}
           onOpenSlashMenu={onOpenSlashMenu}

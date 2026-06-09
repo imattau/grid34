@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { TemplateBlock } from './TemplateBlock'
 import { DraftStoreContext } from '../contexts/storeContexts'
@@ -48,5 +48,20 @@ describe('TemplateBlock', () => {
         text: 'Daily log',
       })
     )
+  })
+
+  it('inserts a hard break on Enter instead of splitting the block', () => {
+    const onSplitBlock = vi.fn()
+    render(
+      <DraftStoreContext.Provider value={{ stage: vi.fn() } as DraftStore}>
+        <TemplateBlock block={makeBlock()} pageId="page-1" onSplitBlock={onSplitBlock} />
+      </DraftStoreContext.Provider>
+    )
+
+    const editor = screen.getByLabelText('Template content')
+    editor.focus()
+    fireEvent.keyDown(editor, { key: 'Enter' })
+
+    expect(onSplitBlock).not.toHaveBeenCalled()
   })
 })

@@ -187,6 +187,9 @@ describe('PageEditor', () => {
         type: 'database',
         databaseId: expect.any(String),
         columns: ['Column 1', 'Column 2'],
+        seedRows: expect.objectContaining({
+          'row-1': expect.objectContaining({ 'Column 1': 'Example', 'Column 2': 'Value' }),
+        }),
         rowEdits: {},
       })
     )

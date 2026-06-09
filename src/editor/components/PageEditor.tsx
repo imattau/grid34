@@ -472,6 +472,13 @@ export function PageEditor({
               Array.isArray(item.content.columns) && item.content.columns.length > 0
                 ? item.content.columns
                 : ['Column 1', 'Column 2'],
+            seedRows:
+              item.content.seedRows && typeof item.content.seedRows === 'object' && !Array.isArray(item.content.seedRows)
+                ? item.content.seedRows
+                : {
+                    'row-1': { 'Column 1': 'Example', 'Column 2': 'Value' },
+                    'row-2': { 'Column 1': 'Another row', 'Column 2': '' },
+                  },
             rowEdits:
               item.content.rowEdits && typeof item.content.rowEdits === 'object' && !Array.isArray(item.content.rowEdits)
                 ? item.content.rowEdits

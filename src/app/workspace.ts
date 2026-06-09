@@ -236,7 +236,11 @@ function syncDatabaseViewRows(db: any, dbViewStore: DbViewStore, databaseRows: D
           : block.id
       activeDatabaseIds.add(databaseId)
 
-      const currentRows = { ...(databaseRows[databaseId] ?? {}) }
+      const seedRows =
+        viewSpec.seedRows && typeof viewSpec.seedRows === 'object' && !Array.isArray(viewSpec.seedRows)
+          ? viewSpec.seedRows
+          : {}
+      const currentRows = { ...(databaseRows[databaseId] ?? seedRows) }
       for (const [rowId, patch] of Object.entries(viewSpec.rowEdits ?? {})) {
         currentRows[rowId] = { ...(currentRows[rowId] ?? {}), ...patch }
       }
