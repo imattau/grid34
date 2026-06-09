@@ -3,6 +3,7 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { of } from 'rxjs'
 import { PageTree } from './PageTree'
+import { computePageMoveTarget, computePageTreePreviewMode } from './PageTree'
 import { RepoStoreContext, DraftStoreContext, type EditorRepoStore } from '../contexts/storeContexts'
 import type { PageTreeState } from '../../storage/repo/types'
 import type { DraftStore } from '../stores/draftStore'
@@ -60,5 +61,29 @@ describe('PageTree', () => {
 
     expect(onSelect).toHaveBeenCalledWith(null)
     confirmSpy.mockRestore()
+  })
+
+  it('nests a page under the hovered page when the drag moves far enough to the right', () => {
+    const target = computePageMoveTarget(treeState, 'page-2', 'page-1', 40)
+
+    expect(target).toEqual({
+      parentId: 'page-1',
+      order: 1,
+    })
+  })
+
+  it('keeps same-level reordering when the drag stays aligned horizontally', () => {
+    const target = computePageMoveTarget(treeState, 'page-2', 'page-1', 0)
+
+    expect(target).toEqual({
+      parentId: null,
+      order: -1,
+    })
+  })
+
+  it('switches the drag preview into nest mode once the drag moves far enough right', () => {
+    expect(computePageTreePreviewMode(0)).toBe('reorder')
+    expect(computePageTreePreviewMode(24)).toBe('reorder')
+    expect(computePageTreePreviewMode(25)).toBe('nest')
   })
 })

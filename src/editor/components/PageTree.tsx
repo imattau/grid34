@@ -7,7 +7,9 @@ import {
   PointerSensor,
   useSensor,
   useSensors,
+  type Modifier,
   type DragEndEvent,
+  type DragOverEvent,
 } from '@dnd-kit/core'
 import {
   SortableContext,
@@ -27,6 +29,61 @@ function childrenOf(state: PageTreeState, parentId: string | null): Page[] {
     .sort((a, b) => a.order - b.order)
 }
 
+const NEST_DRAG_THRESHOLD_PX = 24
+
+const clampPageTreeDragToSidebar: Modifier = ({
+  transform,
+  draggingNodeRect,
+  containerNodeRect,
+}) => {
+  if (!draggingNodeRect || !containerNodeRect) return transform
+
+  const minX = containerNodeRect.left - draggingNodeRect.left
+  const maxX = containerNodeRect.right - draggingNodeRect.right
+
+  return {
+    ...transform,
+    x: Math.min(maxX, Math.max(minX, transform.x)),
+  }
+}
+
+export function computePageMoveTarget(
+  state: PageTreeState,
+  activeId: string,
+  overId: string,
+  deltaX: number
+): { parentId: string | null; order: number } | null {
+  if (activeId === overId) return null
+
+  const activePage = state.pages[activeId]
+  const overPage = state.pages[overId]
+  if (!activePage || !overPage) return null
+
+  const shouldNest = deltaX > NEST_DRAG_THRESHOLD_PX
+  const parentId = shouldNest ? overPage.id : overPage.parentId
+  const siblings = childrenOf(state, parentId).filter((page) => page.id !== activeId)
+  const overIndex = siblings.findIndex((page) => page.id === overId)
+
+  let order = 0
+  if (siblings.length === 0) {
+    order = 1.0
+  } else if (shouldNest) {
+    order = siblings[siblings.length - 1].order + 1.0
+  } else if (overIndex === 0) {
+    order = siblings[0].order - 1.0
+  } else if (overIndex === -1 || overIndex === siblings.length - 1) {
+    order = siblings[siblings.length - 1].order + 1.0
+  } else {
+    order = (siblings[overIndex].order + siblings[overIndex + 1].order) / 2.0
+  }
+
+  return { parentId, order }
+}
+
+export function computePageTreePreviewMode(deltaX: number): 'nest' | 'reorder' {
+  return deltaX > NEST_DRAG_THRESHOLD_PX ? 'nest' : 'reorder'
+}
+
 function PageNode({
   page,
   state,
@@ -34,6 +91,7 @@ function PageNode({
   onSelectPage,
   collapsedMap,
   onToggleCollapse,
+  dragPreview,
 }: {
   page: Page
   state: PageTreeState
@@ -41,6 +99,7 @@ function PageNode({
   onSelectPage: (pageId: string | null) => void
   collapsedMap: Record<string, boolean>
   onToggleCollapse: (pageId: string) => void
+  dragPreview: { activeId: string; overId: string; deltaX: number } | null
 }) {
   const draftStore = useDraftStore()
   const children = childrenOf(state, page.id)
@@ -121,6 +180,9 @@ function PageNode({
   }
 
   const icon = page.icon || '📄'
+  const isDragTarget = dragPreview?.overId === page.id
+  const isNestedPreview = isDragTarget && computePageTreePreviewMode(dragPreview.deltaX) === 'nest'
+  const isReorderPreview = isDragTarget && computePageTreePreviewMode(dragPreview.deltaX) === 'reorder'
 
   return (
     <li ref={setNodeRef} style={style} className="list-none my-0.5">
@@ -130,6 +192,12 @@ function PageNode({
         }`}
         onClick={() => onSelectPage(page.id)}
       >
+        {isNestedPreview && (
+          <div className="absolute left-0 top-1 bottom-1 w-1 rounded-full bg-blue-500/80 shadow-[0_0_0_1px_rgba(59,130,246,0.15)]" />
+        )}
+        {isReorderPreview && (
+          <div className="absolute left-0 right-0 top-0 h-px bg-blue-500/70" />
+        )}
         <div className="flex items-center gap-1 min-w-0 flex-1">
           {/* Drag handle */}
           <span
@@ -194,6 +262,11 @@ function PageNode({
         {/* Hover-revealed actions (add child, delete) */}
         {!isEditing && (
           <div className="sidebar-page-item__actions opacity-0 group-hover:opacity-100 flex items-center justify-end gap-0.5 z-10 transition-opacity">
+            {isNestedPreview && (
+              <span className="mr-1 rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-blue-700">
+                Nest here
+              </span>
+            )}
             <button
               type="button"
               className="sidebar-page-action text-gray-500 hover:text-gray-900 hover:bg-gray-200"
@@ -231,6 +304,7 @@ function PageNode({
                 onSelectPage={onSelectPage}
                 collapsedMap={collapsedMap}
                 onToggleCollapse={onToggleCollapse}
+                dragPreview={dragPreview}
               />
             ))}
           </ul>
@@ -245,6 +319,7 @@ export function PageTree({ selectedPageId, onSelectPage }: PageTreeProps) {
   const draftStore = useDraftStore()
   const [state, setState] = useState<PageTreeState>({ pages: {} })
   const [collapsedMap, setCollapsedMap] = useState<Record<string, boolean>>({})
+  const [dragPreview, setDragPreview] = useState<{ activeId: string; overId: string; deltaX: number } | null>(null)
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -271,39 +346,52 @@ export function PageTree({ selectedPageId, onSelectPage }: PageTreeProps) {
     onSelectPage(newPageId)
   }
 
+  function clearDragPreview() {
+    setDragPreview(null)
+  }
+
+  function handleDragOver(event: DragOverEvent) {
+    if (!event.over) {
+      clearDragPreview()
+      return
+    }
+
+    const activeId = String(event.active.id)
+    const overId = String(event.over.id)
+    if (activeId === overId) {
+      clearDragPreview()
+      return
+    }
+
+    setDragPreview({ activeId, overId, deltaX: event.delta.x })
+  }
+
   function handleDragEnd(event: DragEndEvent) {
-    const { active, over } = event
+    const { active, over, delta } = event
     if (!over || active.id === over.id) return
 
     const activeId = active.id as string
     const overId = over.id as string
 
-    const activePage = state.pages[activeId]
-    const overPage = state.pages[overId]
-    if (!activePage || !overPage) return
+    const target = computePageMoveTarget(state, activeId, overId, delta.x)
+    if (!target) return
 
-    const newParentId = overPage.parentId
-    const siblings = childrenOf(state, newParentId).filter((p) => p.id !== activeId)
-    const overIndex = siblings.findIndex((p) => p.id === overId)
-
-    let newOrder = 0
-    if (siblings.length === 0) {
-      newOrder = 1.0
-    } else if (overIndex === 0) {
-      newOrder = siblings[0].order - 1.0
-    } else if (overIndex === -1 || overIndex === siblings.length - 1) {
-      newOrder = siblings[siblings.length - 1].order + 1.0
-    } else {
-      newOrder = (siblings[overIndex].order + siblings[overIndex + 1].order) / 2.0
-    }
-
-    draftStore.movePage(activeId, newParentId, newOrder)
+    draftStore.movePage(activeId, target.parentId, target.order)
+    clearDragPreview()
   }
 
   const roots = childrenOf(state, null)
 
   return (
-    <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+    <DndContext
+      sensors={sensors}
+      collisionDetection={closestCenter}
+      autoScroll={false}
+      modifiers={[clampPageTreeDragToSidebar]}
+      onDragOver={handleDragOver as any}
+      onDragEnd={handleDragEnd}
+      onDragCancel={clearDragPreview}
+    >
       <nav aria-label="Page tree" className="flex flex-col gap-2 w-full">
         <SortableContext items={roots.map((p) => p.id)} strategy={verticalListSortingStrategy}>
           <ul className="list-none p-0 m-0 flex flex-col gap-0.5">
@@ -316,6 +404,7 @@ export function PageTree({ selectedPageId, onSelectPage }: PageTreeProps) {
                 onSelectPage={onSelectPage}
                 collapsedMap={collapsedMap}
                 onToggleCollapse={handleToggleCollapse}
+                dragPreview={dragPreview}
               />
             ))}
           </ul>

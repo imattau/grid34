@@ -258,7 +258,7 @@ body {
 
 .workspace-frame {
   display: grid;
-  grid-template-columns: 240px minmax(0, 1fr);
+  grid-template-columns: 288px minmax(0, 1fr);
   height: 100vh;
   overflow: hidden;
 }
@@ -273,6 +273,7 @@ body {
   height: 100vh;
   min-height: 0;
   overflow-y: auto;
+  overflow-x: hidden;
   scrollbar-gutter: stable;
   box-sizing: border-box;
 }
@@ -835,6 +836,5 @@ button {
   text-decoration: line-through !important;
   color: var(--color-muted) !important;
 }
-
 
 
