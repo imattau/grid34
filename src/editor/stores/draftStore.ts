@@ -1,6 +1,8 @@
 import { BehaviorSubject, type Observable } from 'rxjs'
 import type { EventTemplate, NostrEvent } from 'nostr-tools/pure'
-import type { Page } from '../../storage/repo/types'
+import type { Page, Block } from '../../storage/repo/types'
+import * as Y from 'yjs'
+import { Awareness } from 'y-protocols/awareness'
 
 export interface DraftRepoStore {
   getPage(pageId: string): Page | undefined
@@ -36,6 +38,10 @@ export interface DraftStore {
   deletePage(pageId: string): void
   changePageIcon(pageId: string, icon: string): void
   movePage(pageId: string, parentId: string | null, order: number): void
+  awareness: Awareness
+  setFocusedBlock(pageId: string, blockId: string | null, userInfo?: { pubkey?: string; name?: string }): void
+  getLockedBlocks(pageId: string): Record<string, { username: string; pubkey: string }>
+  lockedBlocks$: Observable<Record<string, Record<string, { username: string; pubkey: string }>>>
 }
 
 export interface CreateDraftStoreOptions {
@@ -50,6 +56,7 @@ export interface CreateDraftStoreOptions {
   onCheckpoint?: CheckpointListener
   debounceMs?: number
   retryBaseMs?: number
+  awareness?: Awareness
 }
 
 export function createDraftStore(options: CreateDraftStoreOptions): DraftStore {
@@ -65,13 +72,91 @@ export function createDraftStore(options: CreateDraftStoreOptions): DraftStore {
     onCheckpoint,
     debounceMs = 1000,
     retryBaseMs = 1000,
+    awareness = options.awareness ?? new Awareness(new Y.Doc()),
   } = options
 
   const draftsSubject = new BehaviorSubject<DraftMap>({})
   const timers = new Map<string, ReturnType<typeof setTimeout>>()
   const retryAttempts = new Map<string, number>()
 
+  let focusTimeout: ReturnType<typeof setTimeout> | null = null
+  let lastUserInfo: { pubkey?: string; name?: string } | undefined
+
+  function setFocusedBlock(pageId: string, blockId: string | null, userInfo?: { pubkey?: string; name?: string }): void {
+    if (focusTimeout) {
+      clearTimeout(focusTimeout)
+      focusTimeout = null
+    }
+
+    lastUserInfo = userInfo
+
+    const presence = {
+      pubkey: userInfo?.pubkey || 'local',
+      username: userInfo?.name || 'User',
+      pageId,
+      blockId,
+      selection: null,
+    }
+
+    awareness.setLocalState(presence)
+
+    if (blockId) {
+      focusTimeout = setTimeout(() => {
+        setFocusedBlock(pageId, null, userInfo)
+      }, 60000)
+    }
+  }
+
+  function getLockedBlocks(pageId: string): Record<string, { username: string; pubkey: string }> {
+    const pageLocks: Record<string, { username: string; pubkey: string }> = {}
+    for (const [clientId, state] of awareness.getStates().entries()) {
+      if (clientId === awareness.clientID) continue
+      const s = state as any
+      if (s && s.pageId === pageId && s.blockId) {
+        pageLocks[s.blockId] = {
+          username: s.username || 'User',
+          pubkey: s.pubkey || 'unknown',
+        }
+      }
+    }
+    return pageLocks
+  }
+
+  function getAllLockedBlocks(): Record<string, Record<string, { username: string; pubkey: string }>> {
+    const locks: Record<string, Record<string, { username: string; pubkey: string }>> = {}
+    for (const [clientId, state] of awareness.getStates().entries()) {
+      if (clientId === awareness.clientID) continue
+      const s = state as any
+      if (s && s.pageId && s.blockId) {
+        if (!locks[s.pageId]) {
+          locks[s.pageId] = {}
+        }
+        locks[s.pageId][s.blockId] = {
+          username: s.username || 'User',
+          pubkey: s.pubkey || 'unknown',
+        }
+      }
+    }
+    return locks
+  }
+
+  const lockedBlocksSubject = new BehaviorSubject<Record<string, Record<string, { username: string; pubkey: string }>>>({})
+
+  awareness.on('change', () => {
+    lockedBlocksSubject.next(getAllLockedBlocks())
+  })
+
   function stage(pageId: string, blockId: string, content: Record<string, unknown>): void {
+    const localState = awareness.getLocalState() as any
+    if (localState && localState.blockId === blockId) {
+      if (focusTimeout) {
+        clearTimeout(focusTimeout)
+      }
+      focusTimeout = setTimeout(() => {
+        setFocusedBlock(pageId, null, lastUserInfo)
+      }, 60000)
+    }
+
     const current = draftsSubject.getValue()
     draftsSubject.next({
       ...current,
@@ -269,5 +354,9 @@ export function createDraftStore(options: CreateDraftStoreOptions): DraftStore {
     deletePage,
     changePageIcon,
     movePage,
+    awareness,
+    setFocusedBlock,
+    getLockedBlocks,
+    lockedBlocks$: lockedBlocksSubject.asObservable(),
   }
 }

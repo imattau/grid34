@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { of } from 'rxjs'
+import { BehaviorSubject, of } from 'rxjs'
 import { PageEditor } from './PageEditor'
 import { RepoStoreContext, DraftStoreContext, DbViewStoreContext, type EditorRepoStore } from '../contexts/storeContexts'
 import type { DraftStore } from '../stores/draftStore'
@@ -507,5 +507,55 @@ describe('PageEditor', () => {
     }
 
     expect(draftStore.stage).not.toHaveBeenCalled()
+  })
+
+  it('renders a locked indicator and disables block component when block is locked by another user', async () => {
+    const page: Page = {
+      id: 'page-1',
+      title: 'My Page',
+      parentId: null,
+      order: 0,
+      updatedAt: 1000,
+      blocks: [
+        { id: 'block-1', type: 'paragraph', parentBlockId: null, order: 0, content: { text: 'Hello' }, updatedAt: 1000 },
+      ],
+    }
+
+    const repoStore: Partial<EditorRepoStore> = {
+      pageTree$: of({ pages: {} }),
+      observePage: vi.fn(() => of({ status: 'ready', page })),
+      listPageRevisions: vi.fn(() => []),
+    }
+
+    const mockLockedBlocksSubject = new BehaviorSubject<Record<string, Record<string, { username: string; pubkey: string }>>>({
+      'page-1': {
+        'block-1': { username: 'Bob', pubkey: 'npub-bob' },
+      },
+    })
+
+    const draftStore: Partial<DraftStore> = {
+      stage: vi.fn(),
+      drafts$: of({}),
+      flush: vi.fn(),
+      getLockedBlocks: vi.fn((pageId) => ({
+        'block-1': { username: 'Bob', pubkey: 'npub-bob' },
+      })),
+      lockedBlocks$: mockLockedBlocksSubject.asObservable(),
+    }
+    const dbViewStore: Partial<DbViewStore> = { observeRows: vi.fn(() => of([])), notifyChanged: vi.fn() }
+
+    render(
+      <RepoStoreContext.Provider value={repoStore as EditorRepoStore}>
+        <DraftStoreContext.Provider value={draftStore as DraftStore}>
+          <DbViewStoreContext.Provider value={dbViewStore as DbViewStore}>
+            <PageEditor pageId="page-1" currentUserPubkey="npub-self" />
+          </DbViewStoreContext.Provider>
+        </DraftStoreContext.Provider>
+      </RepoStoreContext.Provider>
+    )
+
+    expect(await screen.findByText('Bob is editing...')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Paragraph text')).not.toBeInTheDocument()
+    expect(screen.queryByTitle('Delete block')).not.toBeInTheDocument()
   })
 })

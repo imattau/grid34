@@ -65,6 +65,9 @@ export function PageEditor({ pageId, workspaceId: workspaceIdProp, currentUserPu
   const [contactQuery, setContactQuery] = useState('')
   const [invitedPubkeys, setInvitedPubkeys] = useState<string[]>([])
 
+  const [lockedBlocks, setLockedBlocks] = useState<Record<string, { username: string; pubkey: string }>>({})
+  const [currentUserInfo, setCurrentUserInfo] = useState<{ pubkey?: string; name?: string }>({})
+
   const workspaceId =
     workspaceIdProp ??
     ((typeof window !== 'undefined' && localStorage.getItem('grid34_active_repo_id')) || 'workspace-repo')
@@ -88,6 +91,54 @@ export function PageEditor({ pageId, workspaceId: workspaceIdProp, currentUserPu
     movePage: () => {},
   }
   const editorDraftStore = canEdit ? draftStore : readOnlyDraftStore
+
+  useEffect(() => {
+    if (resolvedUserPubkey) {
+      const stored = sessionStorage.getItem('nostr_user')
+      if (stored) {
+        try {
+          const parsed = JSON.parse(stored)
+          setCurrentUserInfo({
+            pubkey: resolvedUserPubkey,
+            name: parsed.name || 'User',
+          })
+        } catch {
+          setCurrentUserInfo({ pubkey: resolvedUserPubkey, name: 'User' })
+        }
+      } else {
+        setCurrentUserInfo({ pubkey: resolvedUserPubkey, name: 'User' })
+      }
+    } else {
+      setCurrentUserInfo({ pubkey: 'local', name: 'User' })
+    }
+  }, [resolvedUserPubkey])
+
+  useEffect(() => {
+    if (editorDraftStore.getLockedBlocks) {
+      setLockedBlocks(editorDraftStore.getLockedBlocks(pageId))
+    }
+    if (editorDraftStore.lockedBlocks$) {
+      const sub = editorDraftStore.lockedBlocks$.subscribe((allLocks) => {
+        setLockedBlocks(allLocks[pageId] || {})
+      })
+      return () => sub.unsubscribe()
+    }
+  }, [editorDraftStore, pageId])
+
+  function handleBlockFocus(blockId: string) {
+    if (editorDraftStore.setFocusedBlock) {
+      editorDraftStore.setFocusedBlock(pageId, blockId, currentUserInfo)
+    }
+  }
+
+  function handleBlockBlur(blockId: string) {
+    if (editorDraftStore.setFocusedBlock && editorDraftStore.awareness) {
+      const localState = editorDraftStore.awareness.getLocalState() as any
+      if (localState && localState.blockId === blockId) {
+        editorDraftStore.setFocusedBlock(pageId, null, currentUserInfo)
+      }
+    }
+  }
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -678,15 +729,24 @@ export function PageEditor({ pageId, workspaceId: workspaceIdProp, currentUserPu
                     block={block}
                     pageId={pageId}
                     onDelete={() => handleDeleteBlock(block.id)}
+                    isLocked={!!lockedBlocks[block.id]}
+                    onFocusCapture={() => handleBlockFocus(block.id)}
+                    onBlurCapture={() => handleBlockBlur(block.id)}
                   >
-                    <Component
-                      block={block}
-                      pageId={pageId}
-                      listIndex={listIndex}
-                      onSplitBlock={handleSplitBlock}
-                      onMergeWithPrevious={handleMergeWithPrevious}
-                      onOpenSlashMenu={handleOpenSlashMenu}
-                    />
+                    {lockedBlocks[block.id] ? (
+                      <div className="locked-block-indicator py-2 px-3 bg-gray-50 border border-dashed border-gray-200 rounded-lg text-sm text-gray-500 italic select-none">
+                        {lockedBlocks[block.id].username} is editing...
+                      </div>
+                    ) : (
+                      <Component
+                        block={block}
+                        pageId={pageId}
+                        listIndex={listIndex}
+                        onSplitBlock={handleSplitBlock}
+                        onMergeWithPrevious={handleMergeWithPrevious}
+                        onOpenSlashMenu={handleOpenSlashMenu}
+                      />
+                    )}
                   </BlockChrome>
                 )
               })}

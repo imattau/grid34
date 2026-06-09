@@ -357,3 +357,94 @@ describe('DraftStore Page CRUD', () => {
     expect(publisher.publishPatch).toHaveBeenCalledTimes(1)
   })
 })
+
+describe('Block locking and focus', () => {
+  let store: DraftStore
+  let repoStore: any
+  let commitBuilder: any
+  let publisher: any
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+    repoStore = makeFakeRepoStore({ pages: { 'page-1': makePage() } })
+    commitBuilder = {
+      buildPatchEventTemplate: vi.fn(() => ({ kind: 1617, created_at: 0, tags: [], content: 'cipher' })),
+    }
+    publisher = {
+      publishPatch: vi.fn(async () => ({
+        id: 'evt-1',
+        kind: 1617,
+        created_at: 0,
+        tags: [],
+        content: 'cipher',
+        pubkey: 'pk',
+        sig: 'sig',
+      })),
+    }
+    store = createDraftStore({
+      repoStore,
+      commitBuilder,
+      publisher,
+      signer: {} as never,
+      relayPublisher: {} as never,
+      relayUrls: [],
+      debounceMs: 1000,
+    })
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('advertises focused block and fetches locked blocks via Yjs awareness', () => {
+    store.setFocusedBlock('page-1', 'block-1', { pubkey: 'pk-local', name: 'Alice' })
+    
+    // Local focus doesn't lock it for oneself
+    expect(store.getLockedBlocks('page-1')).toEqual({})
+
+    // Set remote state in Yjs awareness
+    store.awareness.states.set(999, {
+      pubkey: 'pk-bob',
+      username: 'Bob',
+      pageId: 'page-1',
+      blockId: 'block-2',
+    })
+    store.awareness.emit('change', [{ added: [999], updated: [], removed: [] }])
+
+    expect(store.getLockedBlocks('page-1')).toEqual({
+      'block-2': { username: 'Bob', pubkey: 'pk-bob' }
+    })
+  })
+
+  it('releases focus lock after 60 seconds of inactivity', () => {
+    store.setFocusedBlock('page-1', 'block-1', { pubkey: 'pk-local', name: 'Alice' })
+    const localState = store.awareness.getLocalState() as any
+    expect(localState.blockId).toBe('block-1')
+
+    // Advance 59 seconds
+    vi.advanceTimersByTime(59000)
+    expect((store.awareness.getLocalState() as any).blockId).toBe('block-1')
+
+    // Advance to 60 seconds
+    vi.advanceTimersByTime(1000)
+    expect((store.awareness.getLocalState() as any).blockId).toBeNull()
+  })
+
+  it('resets inactivity timer when staging edits on the focused block', () => {
+    store.setFocusedBlock('page-1', 'block-1', { pubkey: 'pk-local', name: 'Alice' })
+    
+    // Advance 30 seconds
+    vi.advanceTimersByTime(30000)
+
+    // Stage edit
+    store.stage('page-1', 'block-1', { text: 'editing text' })
+
+    // Advance another 30 seconds (total 60 since initial focus, but only 30 since stage)
+    vi.advanceTimersByTime(30000)
+    expect((store.awareness.getLocalState() as any).blockId).toBe('block-1')
+
+    // Advance another 30 seconds (total 60 since stage)
+    vi.advanceTimersByTime(30000)
+    expect((store.awareness.getLocalState() as any).blockId).toBeNull()
+  })
+})
