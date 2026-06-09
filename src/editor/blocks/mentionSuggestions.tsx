@@ -12,8 +12,8 @@ export const MentionList = forwardRef((props: MentionListProps, ref) => {
 
   const selectItem = (index: number) => {
     const item = props.items[index]
-    if (item) {
-      const label = item.petname || item.displayName || item.name || item.pubkey
+    if (item && item.pubkey) {
+      const label = item.petname || item.displayName || item.name || `${item.pubkey.slice(0, 8)}…${item.pubkey.slice(-4)}`
       props.command({ id: item.pubkey, label })
     }
   }
@@ -103,6 +103,16 @@ MentionList.displayName = 'MentionList'
 export const mentionSuggestionConfig = {
   items: ({ query }: { query: string }): NostrContact[] => {
     const contacts = getCachedContacts()
+    if (contacts.length === 0) {
+      // Return a temporary placeholder contact so the popup is triggered and informs the user
+      return [
+        {
+          pubkey: '',
+          name: 'No contacts loaded',
+          displayName: 'Connect Nostr or wait to sync profiles',
+        },
+      ]
+    }
     const lowercaseQuery = query.toLowerCase()
     return contacts.filter((contact) => {
       const petname = contact.petname?.toLowerCase() || ''
