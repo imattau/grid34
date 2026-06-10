@@ -29,6 +29,13 @@ import {
   toDeletedWorkspaceRecordMap,
 } from './app/workspaceLifecycle'
 import type { EventTemplate, NostrEvent } from 'nostr-tools/pure'
+import {
+  hasStoredPasskeyIdentity,
+  registerPasskeyIdentity,
+  unlockPasskeyIdentity,
+  buildPasskeySignerShim,
+  isPasskeyShim,
+} from './app/passkeyIdentity'
 
 const DEFAULT_RELAY_URLS = ['wss://nos.lol', 'wss://relay.damus.io', 'wss://relay.nostr.band']
 
@@ -37,10 +44,22 @@ function loadStoredUser(): NostrProfile | null {
   const stored = sessionStorage.getItem('nostr_user')
   if (!stored) return null
   try {
-    return JSON.parse(stored) as NostrProfile
+    const user = JSON.parse(stored) as NostrProfile
+    if (user.authMethod === 'passkey') {
+      // Passkey sessions never persist a decrypted nsec, so we can't reinstall
+      // the signer shim without re-prompting WebAuthn. Treat as logged out.
+      sessionStorage.removeItem('nostr_user')
+      return null
+    }
+    return user
   } catch {
     return null
   }
+}
+
+function hasRealNostrExtension(): boolean {
+  const nostr = (globalThis as typeof globalThis & { nostr?: unknown }).nostr
+  return !!nostr && !isPasskeyShim(nostr)
 }
 
 function loadStoredRelays(): string[] {
@@ -101,11 +120,15 @@ function GuestShell({
   message,
   actionLabel,
   onAction,
+  secondaryActionLabel,
+  onSecondaryAction,
 }: {
   title: string
   message: string
   actionLabel: string
   onAction: () => void
+  secondaryActionLabel?: string
+  onSecondaryAction?: () => void
 }) {
   return (
     <main className="workspace-shell workspace-shell--loading">
@@ -113,7 +136,7 @@ function GuestShell({
         <div className="flex-1 flex flex-col justify-center min-w-0 text-left">
           <h1 className="text-2xl font-bold tracking-tight text-gray-900 dark:text-white">{title}</h1>
           <p className="mt-3 text-sm text-gray-500 dark:text-gray-400 leading-relaxed">{message}</p>
-          <div className="mt-6">
+          <div className="mt-6 flex flex-col items-start gap-2">
             <button
               type="button"
               onClick={onAction}
@@ -121,6 +144,15 @@ function GuestShell({
             >
               {actionLabel}
             </button>
+            {secondaryActionLabel && onSecondaryAction && (
+              <button
+                type="button"
+                onClick={onSecondaryAction}
+                className="inline-flex items-center justify-center rounded-xl border border-gray-300 dark:border-gray-700 px-5 py-2.5 text-sm font-semibold text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition-all cursor-pointer"
+              >
+                {secondaryActionLabel}
+              </button>
+            )}
           </div>
         </div>
 
@@ -139,6 +171,7 @@ interface NostrProfile {
   pubkey: string
   name: string
   picture: string
+  authMethod?: 'nip07' | 'passkey'
 }
 
 type NostrBrowserApi = {
@@ -451,7 +484,7 @@ function WorkspaceView({ workspace }: { workspace: Workspace }) {
         console.warn('Failed to fetch Nostr metadata from relays, using fallback details', err)
       }
 
-      const profile: NostrProfile = { pubkey, name, picture }
+      const profile: NostrProfile = { pubkey, name, picture, authMethod: 'nip07' }
       setUser(profile)
       sessionStorage.setItem('nostr_user', JSON.stringify(profile))
 
@@ -485,7 +518,60 @@ function WorkspaceView({ workspace }: { workspace: Workspace }) {
     }
   }
 
+  async function handlePasskeyLogin() {
+    try {
+      if (hasRealNostrExtension()) {
+        throw new Error('A Nostr browser extension (NIP-07) is active. Please disable it or use "Connect Nostr" instead of passkey login.')
+      }
+
+      const { secretKey, pubkey } = hasStoredPasskeyIdentity()
+        ? await unlockPasskeyIdentity()
+        : await registerPasskeyIdentity()
+
+      ;(globalThis as typeof globalThis & { nostr?: unknown }).nostr = buildPasskeySignerShim(secretKey)
+
+      let name = pubkey.substring(0, 8) + '...'
+      let picture = `https://robohash.org/${pubkey}.png?set=set4`
+      try {
+        const pool = new SimplePool()
+        const relays = DEFAULT_RELAY_URLS
+        const event = await pool.get(relays, { kinds: [0], authors: [pubkey] })
+        if (event && event.content) {
+          const meta = JSON.parse(event.content)
+          if (meta.name) name = meta.name
+          if (meta.display_name) name = meta.display_name
+          if (meta.picture) picture = meta.picture
+        }
+        pool.close(relays)
+      } catch (err) {
+        console.warn('Failed to fetch Nostr metadata from relays, using fallback details', err)
+      }
+
+      const profile: NostrProfile = { pubkey, name, picture, authMethod: 'passkey' }
+      setUser(profile)
+      sessionStorage.setItem('nostr_user', JSON.stringify(profile))
+      sessionStorage.setItem('nostr_relays', JSON.stringify(DEFAULT_RELAY_URLS))
+
+      try {
+        const payload = await syncWorkspacesFromNostr(pubkey, DEFAULT_RELAY_URLS)
+        if (payload && Array.isArray(payload.workspaces)) {
+          applyWorkspaceConfigPayload(payload)
+        }
+      } catch (err) {
+        console.warn('Failed to sync settings from Nostr on login', err)
+      }
+
+      window.location.reload()
+    } catch (err) {
+      console.error('Passkey login error', err)
+      alert(err instanceof Error ? err.message : 'Passkey login failed')
+    }
+  }
+
   function handleLogout() {
+    if (user?.authMethod === 'passkey') {
+      delete (globalThis as typeof globalThis & { nostr?: unknown }).nostr
+    }
     setUser(null)
     sessionStorage.removeItem('nostr_user')
     sessionStorage.removeItem('nostr_relays')
@@ -514,6 +600,8 @@ function WorkspaceView({ workspace }: { workspace: Workspace }) {
         }
         actionLabel={user ? 'Sign out' : 'Connect Nostr'}
         onAction={user ? handleLogout : handleLogin}
+        secondaryActionLabel={!user ? 'Continue with Passkey' : undefined}
+        onSecondaryAction={!user ? handlePasskeyLogin : undefined}
       />
     )
   }
@@ -579,17 +667,30 @@ function WorkspaceView({ workspace }: { workspace: Workspace }) {
                             Sign out of Nostr
                           </button>
                         ) : (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              handleLogin()
-                              setShowUserMenu(false)
-                            }}
-                            className="sidebar-control sidebar-control--menuitem"
-                          >
-                            <span className="text-yellow-500 text-[10px] leading-none">⚡</span>
-                            <span>Connect Nostr (NIP-07)</span>
-                          </button>
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                handleLogin()
+                                setShowUserMenu(false)
+                              }}
+                              className="sidebar-control sidebar-control--menuitem"
+                            >
+                              <span className="text-yellow-500 text-[10px] leading-none">⚡</span>
+                              <span>Connect Nostr (NIP-07)</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                void handlePasskeyLogin()
+                                setShowUserMenu(false)
+                              }}
+                              className="sidebar-control sidebar-control--menuitem"
+                            >
+                              <span className="text-yellow-500 text-[10px] leading-none">🔑</span>
+                              <span>Continue with Passkey</span>
+                            </button>
+                          </>
                         )}
                       </div>
                     </>

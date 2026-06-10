@@ -3,12 +3,34 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import App, { applyWorkspaceConfigPayload, requestNostrPermissions } from './App'
 
+const { hasStoredPasskeyIdentityMock, registerPasskeyIdentityMock, unlockPasskeyIdentityMock, buildPasskeySignerShimMock } = vi.hoisted(() => ({
+  hasStoredPasskeyIdentityMock: vi.fn(() => false),
+  registerPasskeyIdentityMock: vi.fn(),
+  unlockPasskeyIdentityMock: vi.fn(),
+  buildPasskeySignerShimMock: vi.fn(() => ({
+    getPublicKey: vi.fn(),
+    signEvent: vi.fn(),
+    nip04: { encrypt: vi.fn(), decrypt: vi.fn() },
+  })),
+}))
+
+vi.mock('./app/passkeyIdentity', () => ({
+  hasStoredPasskeyIdentity: hasStoredPasskeyIdentityMock,
+  registerPasskeyIdentity: registerPasskeyIdentityMock,
+  unlockPasskeyIdentity: unlockPasskeyIdentityMock,
+  buildPasskeySignerShim: buildPasskeySignerShimMock,
+}))
+
 describe('App', () => {
   afterEach(() => {
     vi.useRealTimers()
     localStorage.clear()
     sessionStorage.clear()
     delete (globalThis as typeof globalThis & { nostr?: unknown }).nostr
+    hasStoredPasskeyIdentityMock.mockReset().mockReturnValue(false)
+    registerPasskeyIdentityMock.mockReset()
+    unlockPasskeyIdentityMock.mockReset()
+    buildPasskeySignerShimMock.mockClear()
   })
 
   it('shows a guest shell until a Nostr user logs in', async () => {
@@ -20,6 +42,102 @@ describe('App', () => {
     expect(await screen.findByText(/waiting to log in/i, {}, { timeout: 10000 })).toBeInTheDocument()
     expect(screen.getByText(/connect your nostr account/i)).toBeInTheDocument()
     expect(screen.queryByText(/workspace-repo/i)).not.toBeInTheDocument()
+  }, 30000)
+
+  it('shows a "Continue with Passkey" button on the guest shell', async () => {
+    vi.useRealTimers()
+    localStorage.clear()
+    sessionStorage.clear()
+    render(<App />)
+
+    expect(await screen.findByText(/waiting to log in/i, {}, { timeout: 10000 })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /continue with passkey/i })).toBeInTheDocument()
+  }, 30000)
+
+  it('registers a new passkey identity when none is stored', async () => {
+    vi.useRealTimers()
+    localStorage.clear()
+    sessionStorage.clear()
+
+    // Avoid real relay connections (and their lingering async events) during this test.
+    vi.stubGlobal(
+      'WebSocket',
+      class {
+        constructor() {
+          throw new Error('WebSocket disabled in test')
+        }
+      }
+    )
+
+    hasStoredPasskeyIdentityMock.mockReturnValue(false)
+    registerPasskeyIdentityMock.mockResolvedValue({
+      secretKey: new Uint8Array(32).fill(1),
+      pubkey: 'passkey-pubkey-1',
+    })
+
+    render(<App />)
+
+    const button = await screen.findByRole('button', { name: /continue with passkey/i }, { timeout: 10000 })
+    await userEvent.click(button)
+
+    await vi.waitFor(() => {
+      expect(registerPasskeyIdentityMock).toHaveBeenCalled()
+    })
+    expect(unlockPasskeyIdentityMock).not.toHaveBeenCalled()
+
+    await vi.waitFor(
+      () => {
+        const stored = sessionStorage.getItem('nostr_user')
+        expect(stored).toBeTruthy()
+        expect(JSON.parse(stored!)).toMatchObject({ pubkey: 'passkey-pubkey-1', authMethod: 'passkey' })
+      },
+      { timeout: 5000 }
+    )
+
+    vi.unstubAllGlobals()
+  }, 30000)
+
+  it('unlocks an existing passkey identity when one is already stored', async () => {
+    vi.useRealTimers()
+    localStorage.clear()
+    sessionStorage.clear()
+
+    // Avoid real relay connections (and their lingering async events) during this test.
+    vi.stubGlobal(
+      'WebSocket',
+      class {
+        constructor() {
+          throw new Error('WebSocket disabled in test')
+        }
+      }
+    )
+
+    hasStoredPasskeyIdentityMock.mockReturnValue(true)
+    unlockPasskeyIdentityMock.mockResolvedValue({
+      secretKey: new Uint8Array(32).fill(2),
+      pubkey: 'passkey-pubkey-2',
+    })
+
+    render(<App />)
+
+    const button = await screen.findByRole('button', { name: /continue with passkey/i }, { timeout: 10000 })
+    await userEvent.click(button)
+
+    await vi.waitFor(() => {
+      expect(unlockPasskeyIdentityMock).toHaveBeenCalled()
+    })
+    expect(registerPasskeyIdentityMock).not.toHaveBeenCalled()
+
+    await vi.waitFor(
+      () => {
+        const stored = sessionStorage.getItem('nostr_user')
+        expect(stored).toBeTruthy()
+        expect(JSON.parse(stored!)).toMatchObject({ pubkey: 'passkey-pubkey-2', authMethod: 'passkey' })
+      },
+      { timeout: 5000 }
+    )
+
+    vi.unstubAllGlobals()
   }, 30000)
 
   it('boots a Notion-like workspace with the editor and page tree wired up for the owner', async () => {
@@ -53,6 +171,22 @@ describe('App', () => {
 
     expect(sessionStorage.getItem('nostr_user')).toBeNull()
     expect(await screen.findByText(/waiting to log in/i, {}, { timeout: 10000 })).toBeInTheDocument()
+  }, 30000)
+
+  it('does not restore a passkey session across reload and clears the stored profile', async () => {
+    vi.useRealTimers()
+    localStorage.clear()
+    sessionStorage.clear()
+    localStorage.setItem('grid34_workspace_owner_workspace-repo', 'pubkey-1')
+    sessionStorage.setItem(
+      'nostr_user',
+      JSON.stringify({ pubkey: 'pubkey-1', name: 'Alice', picture: 'https://example.com/avatar.png', authMethod: 'passkey' })
+    )
+
+    render(<App />)
+
+    expect(await screen.findByText(/waiting to log in/i, {}, { timeout: 10000 })).toBeInTheDocument()
+    expect(sessionStorage.getItem('nostr_user')).toBeNull()
   }, 30000)
 
   it('shows the CEK controls in the workspace sidebar instead of the user menu', async () => {
