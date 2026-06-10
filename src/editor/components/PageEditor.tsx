@@ -620,7 +620,7 @@ export function PageEditor({
   }
 
   const visibleContacts = contacts.filter((contact) => {
-    const haystack = `${contact.petname ?? ''} ${contact.pubkey} ${contact.relay ?? ''}`.toLowerCase()
+    const haystack = `${contact.displayName ?? ''} ${contact.name ?? ''} ${contact.petname ?? ''} ${contact.pubkey} ${contact.relay ?? ''}`.toLowerCase()
     return haystack.includes(contactQuery.trim().toLowerCase())
   })
 
