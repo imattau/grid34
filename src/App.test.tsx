@@ -9,6 +9,7 @@ const {
   unlockPasskeyIdentityMock,
   importPasskeyIdentityFromNsecMock,
   buildPasskeySignerShimMock,
+  loadIncomingDMInvitesMock,
 } = vi.hoisted(() => ({
   hasStoredPasskeyIdentityMock: vi.fn(() => false),
   registerPasskeyIdentityMock: vi.fn(),
@@ -19,6 +20,7 @@ const {
     signEvent: vi.fn(),
     nip04: { encrypt: vi.fn(), decrypt: vi.fn() },
   })),
+  loadIncomingDMInvitesMock: vi.fn().mockResolvedValue([]),
 }))
 
 vi.mock('./app/passkeyIdentity', () => ({
@@ -28,6 +30,14 @@ vi.mock('./app/passkeyIdentity', () => ({
   importPasskeyIdentityFromNsec: importPasskeyIdentityFromNsecMock,
   buildPasskeySignerShim: buildPasskeySignerShimMock,
 }))
+
+vi.mock('./editor/contacts/workspaceAccess', async (importOriginal) => {
+  const original = await importOriginal<typeof import('./editor/contacts/workspaceAccess')>()
+  return {
+    ...original,
+    loadIncomingDMInvites: loadIncomingDMInvitesMock,
+  }
+})
 
 describe('App', () => {
   afterEach(() => {
@@ -434,5 +444,42 @@ describe('App', () => {
     expect(changed).toBe(true)
     expect(JSON.parse(localStorage.getItem('grid34_workspaces') ?? '[]')).toEqual(['workspace-kept', 'workspace-new'])
     expect(localStorage.getItem('grid34_active_repo_id')).toBe('workspace-kept')
+  })
+
+  it('displays incoming workspace invitations and accepts them', async () => {
+    localStorage.clear()
+    sessionStorage.clear()
+    sessionStorage.setItem('nostr_user', JSON.stringify({ pubkey: 'pubkey-recipient', name: 'Bob', picture: 'https://example.com/avatar.png' }))
+    localStorage.setItem('grid34_workspaces', JSON.stringify(['workspace-repo']))
+    localStorage.setItem('grid34_workspace_owner_workspace-repo', 'pubkey-recipient')
+    localStorage.setItem('grid34_active_repo_id', 'workspace-repo')
+
+    loadIncomingDMInvitesMock.mockResolvedValueOnce([
+      {
+        workspaceId: 'workspace-dm-new',
+        cek: '000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f',
+        senderPubkey: 'pubkey-sender',
+        timestamp: Date.now(),
+      },
+    ])
+
+    const alertMock = vi.spyOn(window, 'alert').mockImplementation(() => {})
+
+    render(<App />)
+
+    expect(await screen.findByText('Workspace Invitations')).toBeInTheDocument()
+    expect(screen.getByText('workspace-dm-new')).toBeInTheDocument()
+    expect(screen.getByText(/Invited by pubkey-s…nder/)).toBeInTheDocument()
+
+    const acceptBtn = screen.getByRole('button', { name: /accept invite/i })
+    await userEvent.click(acceptBtn)
+
+    const savedCek = localStorage.getItem('grid34_cek_workspace-dm-new')
+    expect(savedCek).not.toBeNull()
+    expect(JSON.parse(savedCek ?? '[]')).toEqual(Array.from(new Uint8Array(32).map((_, i) => i)))
+
+    expect(localStorage.getItem('grid34_active_repo_id')).toBe('workspace-dm-new')
+
+    alertMock.mockRestore()
   })
 })

@@ -12,7 +12,7 @@ import {
   loadWorkspaceOwnerPubkey,
   savePageCollaborators,
 } from '../contacts/pageCollaborators'
-import { publishWorkspaceAccessSnapshot } from '../contacts/workspaceAccess'
+import { publishWorkspaceAccessSnapshot, sendNostrDMInvite } from '../contacts/workspaceAccess'
 import type { Page, Block } from '../../storage/repo/types'
 import type { DraftMap } from '../stores/draftStore'
 import {
@@ -604,6 +604,17 @@ export function PageEditor({
           updatedAt: updatedAt + 1,
           revoked: true,
         })
+      } else {
+        const storedCek = localStorage.getItem(`grid34_cek_${workspaceId}`)
+        if (storedCek) {
+          try {
+            const bytes = new Uint8Array(JSON.parse(storedCek) as number[])
+            const hexCek = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')
+            void sendNostrDMInvite(pubkey, workspaceId, hexCek, relayUrlsProp)
+          } catch (err) {
+            console.warn('[PageEditor] failed to load CEK for Nostr DM invite', err)
+          }
+        }
       }
     }
   }

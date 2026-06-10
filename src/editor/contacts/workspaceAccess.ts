@@ -185,3 +185,110 @@ export async function loadWorkspaceAccessSnapshots(pubkey: string, relayUrls: st
 export async function loadWorkspaceAccessWorkspaces(pubkey: string, relayUrls: string[]): Promise<WorkspaceAccessSnapshot[]> {
   return (await loadWorkspaceAccessSnapshots(pubkey, relayUrls)).filter((snapshot) => !snapshot.pageId)
 }
+
+export interface IncomingWorkspaceInvite {
+  workspaceId: string
+  cek: string // hex
+  senderPubkey: string
+  timestamp: number
+}
+
+export async function sendNostrDMInvite(
+  recipientPubkey: string,
+  workspaceId: string,
+  hexCek: string,
+  relayUrls: string[]
+): Promise<boolean> {
+  const nostr = getNostrApi()
+  if (!nostr?.signEvent || !nostr.nip04?.encrypt) return false
+
+  const relays = uniqueRelayUrls(relayUrls)
+  if (relays.length === 0) return false
+
+  try {
+    const invitePayload = {
+      type: 'grid34-workspace-invite',
+      workspaceId,
+      cek: hexCek,
+    }
+    const encryptedContent = await nostr.nip04.encrypt(recipientPubkey, JSON.stringify(invitePayload))
+    const template = {
+      kind: 4,
+      created_at: Math.floor(Date.now() / 1000),
+      tags: [['p', recipientPubkey]],
+      content: encryptedContent,
+    }
+    const signed = await nostr.signEvent(template)
+    const pool = new SimplePool({ enablePing: true, enableReconnect: true })
+    try {
+      await Promise.all(pool.publish(relays, signed))
+    } finally {
+      pool.close(relays)
+    }
+    return true
+  } catch (error) {
+    console.warn('[WorkspaceAccess] failed to send Nostr DM invite', error)
+    return false
+  }
+}
+
+export async function loadIncomingDMInvites(
+  pubkey: string,
+  relayUrls: string[]
+): Promise<IncomingWorkspaceInvite[]> {
+  const relays = uniqueRelayUrls(relayUrls)
+  if (!pubkey || relays.length === 0) return []
+
+  const nostr = getNostrApi()
+  if (!nostr?.nip04?.decrypt) return []
+
+  const pool = new SimplePool({ enablePing: true, enableReconnect: true })
+  try {
+    const events = await pool.querySync(
+      relays,
+      {
+        kinds: [4],
+        '#p': [pubkey],
+      },
+      { maxWait: 4000 }
+    )
+
+    const invites: IncomingWorkspaceInvite[] = []
+    for (const event of events) {
+      try {
+        const decrypted = await nostr.nip04.decrypt(event.pubkey, event.content)
+        const parsed = JSON.parse(decrypted) as Record<string, unknown>
+        if (
+          parsed &&
+          parsed.type === 'grid34-workspace-invite' &&
+          typeof parsed.workspaceId === 'string' &&
+          typeof parsed.cek === 'string'
+        ) {
+          invites.push({
+            workspaceId: parsed.workspaceId,
+            cek: parsed.cek,
+            senderPubkey: event.pubkey,
+            timestamp: event.created_at * 1000,
+          })
+        }
+      } catch {
+        // Skip undecryptable DMs or non-invite DMs
+      }
+    }
+
+    const newestInvites = new Map<string, IncomingWorkspaceInvite>()
+    for (const invite of invites) {
+      const existing = newestInvites.get(invite.workspaceId)
+      if (!existing || invite.timestamp > existing.timestamp) {
+        newestInvites.set(invite.workspaceId, invite)
+      }
+    }
+
+    return Array.from(newestInvites.values()).sort((a, b) => b.timestamp - a.timestamp)
+  } catch (error) {
+    console.warn('[WorkspaceAccess] failed to load incoming DM invites', error)
+    return []
+  } finally {
+    pool.close(relays)
+  }
+}

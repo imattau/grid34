@@ -20,6 +20,8 @@ vi.mock('nostr-tools/pool', () => ({
 import {
   loadWorkspaceAccessSnapshots,
   publishWorkspaceAccessSnapshot,
+  sendNostrDMInvite,
+  loadIncomingDMInvites,
   type WorkspaceAccessSnapshot,
 } from './workspaceAccess'
 
@@ -154,6 +156,98 @@ describe('workspaceAccess', () => {
         updatedAt: 987654321,
         pageId: undefined,
         revoked: false,
+      },
+    ])
+  })
+
+  it('sends Nostr DM invite (kind 4) encrypted to recipient', async () => {
+    const encrypt = vi.fn(async (recipientPubkey: string, plaintext: string) => `enc:${recipientPubkey}:${plaintext}`)
+    const signEvent = vi.fn(async (template: EventTemplate) => ({
+      ...template,
+      id: 'signed-dm-1',
+      pubkey: 'sender-pubkey',
+    }))
+
+    ;(globalThis as typeof globalThis & { nostr?: unknown }).nostr = {
+      signEvent,
+      nip04: { encrypt },
+    }
+
+    const success = await sendNostrDMInvite('recipient-pubkey', 'workspace-dm-1', 'cek-hex-key', ['wss://relay-dm'])
+
+    expect(success).toBe(true)
+    expect(encrypt).toHaveBeenCalledWith('recipient-pubkey', JSON.stringify({
+      type: 'grid34-workspace-invite',
+      workspaceId: 'workspace-dm-1',
+      cek: 'cek-hex-key',
+    }))
+    expect(signEvent).toHaveBeenCalledWith({
+      kind: 4,
+      created_at: expect.any(Number),
+      tags: [['p', 'recipient-pubkey']],
+      content: 'enc:recipient-pubkey:' + JSON.stringify({
+        type: 'grid34-workspace-invite',
+        workspaceId: 'workspace-dm-1',
+        cek: 'cek-hex-key',
+      }),
+    })
+    expect(publishMock).toHaveBeenCalledWith(['wss://relay-dm'], expect.objectContaining({ id: 'signed-dm-1' }))
+  })
+
+  it('loads and decrypts incoming workspace invite DMs', async () => {
+    querySyncMock.mockResolvedValueOnce([
+      {
+        kind: 4,
+        created_at: 1000,
+        pubkey: 'sender-pubkey-1',
+        content: 'ciphertext-1',
+      },
+      {
+        kind: 4,
+        created_at: 2000,
+        pubkey: 'sender-pubkey-2',
+        content: 'ciphertext-2',
+      },
+    ])
+
+    const decrypt = vi.fn(async (senderPubkey: string, content: string) => {
+      if (senderPubkey === 'sender-pubkey-1' && content === 'ciphertext-1') {
+        return JSON.stringify({
+          type: 'grid34-workspace-invite',
+          workspaceId: 'workspace-dm-1',
+          cek: 'cek-1',
+        })
+      }
+      if (senderPubkey === 'sender-pubkey-2' && content === 'ciphertext-2') {
+        return JSON.stringify({
+          type: 'grid34-workspace-invite',
+          workspaceId: 'workspace-dm-2',
+          cek: 'cek-2',
+        })
+      }
+      throw new Error('unknown ciphertext')
+    })
+
+    ;(globalThis as typeof globalThis & { nostr?: unknown }).nostr = {
+      nip04: { decrypt },
+    }
+
+    const invites = await loadIncomingDMInvites('recipient-pubkey', ['wss://relay-dm'])
+
+    expect(querySyncMock).toHaveBeenCalledWith(['wss://relay-dm'], { kinds: [4], '#p': ['recipient-pubkey'] }, { maxWait: 4000 })
+    expect(decrypt).toHaveBeenCalledTimes(2)
+    expect(invites).toEqual([
+      {
+        workspaceId: 'workspace-dm-2',
+        cek: 'cek-2',
+        senderPubkey: 'sender-pubkey-2',
+        timestamp: 2000000,
+      },
+      {
+        workspaceId: 'workspace-dm-1',
+        cek: 'cek-1',
+        senderPubkey: 'sender-pubkey-1',
+        timestamp: 1000000,
       },
     ])
   })

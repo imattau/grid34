@@ -11,7 +11,12 @@ import {
   saveAccessibleWorkspace,
   saveWorkspaceOwnerPubkey,
 } from './editor/contacts/pageCollaborators'
-import { loadWorkspaceAccessWorkspaces, publishWorkspaceAccessSnapshot } from './editor/contacts/workspaceAccess'
+import {
+  loadWorkspaceAccessWorkspaces,
+  publishWorkspaceAccessSnapshot,
+  loadIncomingDMInvites,
+  type IncomingWorkspaceInvite,
+} from './editor/contacts/workspaceAccess'
 import './app/workspace.css'
 import { syncWorkspacesFromNostr, saveWorkspacesToNostr, type WorkspacesConfigPayload } from './app/nostrConfig'
 import {
@@ -904,6 +909,33 @@ function WorkspaceSwitcher({
   const [workspaces, setWorkspaces] = useState<string[]>([])
   const [newRepoId, setNewRepoId] = useState('')
   const [showImport, setShowImport] = useState(false)
+  const [incomingInvites, setIncomingInvites] = useState<IncomingWorkspaceInvite[]>([])
+  const [invitesLoading, setInvitesLoading] = useState(false)
+
+  useEffect(() => {
+    if (!currentUserPubkey) {
+      setIncomingInvites([])
+      return
+    }
+
+    let active = true
+    setInvitesLoading(true)
+    loadIncomingDMInvites(currentUserPubkey, relayUrls)
+      .then((list) => {
+        if (active) {
+          setIncomingInvites(list)
+          setInvitesLoading(false)
+        }
+      })
+      .catch((err) => {
+        console.warn('Failed to load incoming workspace invites', err)
+        if (active) setInvitesLoading(false)
+      })
+
+    return () => {
+      active = false
+    }
+  }, [currentUserPubkey, relayUrls])
 
   useEffect(() => {
     const next = Array.from(new Set([...loadWorkspaceIds(), activeRepoId]))
@@ -917,6 +949,7 @@ function WorkspaceSwitcher({
 
   const deletedWorkspaces = loadDeletedWorkspaces()
   const visibleWorkspaces = getVisibleWorkspaceIds([...workspaces, ...accessibleWorkspaceIds])
+  const pendingInvites = incomingInvites.filter((invite) => !workspaces.includes(invite.workspaceId))
 
   const syncToNostr = async (nextList: string[], nextActiveId: string) => {
     if (currentUserPubkey) {
@@ -1085,6 +1118,37 @@ function WorkspaceSwitcher({
     onWorkspaceRefresh()
   }
 
+  const handleAcceptInvite = async (invite: IncomingWorkspaceInvite) => {
+    try {
+      const bytes = new Uint8Array(32)
+      for (let i = 0; i < 32; i++) {
+        bytes[i] = parseInt(invite.cek.slice(i * 2, i * 2 + 2), 16)
+      }
+
+      localStorage.setItem(`grid34_cek_${invite.workspaceId}`, JSON.stringify(Array.from(bytes)))
+
+      const nextList = Array.from(new Set([...workspaces, invite.workspaceId]))
+      saveWorkspaces(nextList)
+      localStorage.setItem('grid34_active_repo_id', invite.workspaceId)
+
+      if (currentUserPubkey) {
+        saveAccessibleWorkspace(currentUserPubkey, invite.workspaceId)
+        void publishWorkspaceAccessSnapshot(relayUrls, {
+          workspaceId: invite.workspaceId,
+          collaboratorPubkeys: [currentUserPubkey],
+          ownerPubkey: invite.senderPubkey,
+          updatedAt: Date.now(),
+        })
+      }
+
+      void syncToNostr(nextList, invite.workspaceId)
+      alert(`Joined workspace "${invite.workspaceId}". Switching...`)
+      onWorkspaceRefresh()
+    } catch (err) {
+      alert('Failed to accept workspace invitation')
+    }
+  }
+
   return (
     <div className="flex flex-col gap-0.5 w-full">
       <ul className="list-none p-0 m-0 flex flex-col gap-0.5">
@@ -1178,6 +1242,36 @@ function WorkspaceSwitcher({
                 </li>
               )
             })}
+          </ul>
+        </div>
+      )}
+
+      {pendingInvites.length > 0 && (
+        <div className="mt-3 rounded-lg border border-blue-200 bg-blue-50/70 p-2">
+          <div className="flex items-center justify-between gap-2 px-1 pb-1">
+            <span className="text-[9px] font-bold uppercase tracking-wider text-blue-700">Workspace Invitations</span>
+            <span className="text-[9px] text-blue-600">{pendingInvites.length} pending</span>
+          </div>
+          <ul className="list-none m-0 flex flex-col gap-1">
+            {pendingInvites.map((invite) => (
+              <li key={invite.workspaceId} className="list-none">
+                <div className="flex flex-col gap-1.5 rounded-md border border-blue-200 bg-white/80 p-2 text-[10px]">
+                  <div className="min-w-0">
+                    <div className="truncate font-mono text-blue-950 font-semibold">{invite.workspaceId}</div>
+                    <div className="text-[9px] text-gray-500 truncate mt-0.5">
+                      Invited by {invite.senderPubkey.slice(0, 8)}…{invite.senderPubkey.slice(-4)}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void handleAcceptInvite(invite)}
+                    className="w-full text-center rounded bg-blue-600 hover:bg-blue-700 text-white px-2 py-1 text-[10px] font-medium transition-colors cursor-pointer"
+                  >
+                    Accept Invite
+                  </button>
+                </div>
+              </li>
+            ))}
           </ul>
         </div>
       )}

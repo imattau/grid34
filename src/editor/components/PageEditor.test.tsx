@@ -9,6 +9,15 @@ import type { DbViewStore } from '../stores/dbViewStore'
 import type { Page } from '../../storage/repo/types'
 import { restoreBlockEditorFocus } from './focusBlockEditor'
 
+const { sendNostrDMInviteMock } = vi.hoisted(() => ({
+  sendNostrDMInviteMock: vi.fn().mockResolvedValue(true),
+}))
+
+vi.mock('../contacts/workspaceAccess', () => ({
+  publishWorkspaceAccessSnapshot: vi.fn(),
+  sendNostrDMInvite: sendNostrDMInviteMock,
+}))
+
 vi.mock('../contacts/nostrContacts', () => ({
   loadNostrContacts: vi.fn(async () => [
     { pubkey: 'npub-contact-1', displayName: 'Alice Smith', picture: 'https://example.com/alice.png' },
@@ -498,6 +507,9 @@ describe('PageEditor', () => {
     expect(await screen.findByText('Bob')).toBeInTheDocument()
     expect(screen.getAllByAltText('')[0]).toHaveAttribute('src', 'https://example.com/alice.png')
 
+    localStorage.setItem('grid34_cek_workspace-1', JSON.stringify(Array.from(new Uint8Array(32).map((_, i) => i))))
+    sendNostrDMInviteMock.mockClear()
+
     const aliceButton = screen.getByText('Alice Smith').closest('button')
     expect(aliceButton).not.toBeNull()
     if (aliceButton) {
@@ -505,6 +517,12 @@ describe('PageEditor', () => {
     }
 
     expect(JSON.parse(localStorage.getItem('grid34_page_collaborators_workspace-1_page-1') ?? '[]')).toEqual(['npub-contact-1'])
+    expect(sendNostrDMInviteMock).toHaveBeenCalledWith(
+      'npub-contact-1',
+      'workspace-1',
+      '000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f',
+      ['wss://relay.example']
+    )
   })
 
   it('adds a new block from the plus button, then focuses it after choosing a type', async () => {
