@@ -98,4 +98,29 @@ describe('nostrConfig', () => {
     expect(localStorage.getItem('grid34_cek_repo-new')).toBe('cek-new')
     expect(decrypt).toHaveBeenCalledTimes(2)
   })
+
+  it('overwrites a stale local CEK with the relayed workspace config CEK', async () => {
+    querySyncMock.mockResolvedValue([
+      {
+        id: 'new',
+        kind: 30078,
+        created_at: 2000,
+        pubkey: 'pubkey-1',
+        tags: [],
+        content: 'cipher-new',
+      },
+    ])
+
+    localStorage.setItem('grid34_cek_repo-new', 'stale-cek')
+    const decrypt = vi.fn().mockResolvedValue(
+      JSON.stringify({ workspaces: ['repo-new'], activeRepoId: 'repo-new', updatedAt: 2000, ceks: { 'repo-new': 'fresh-cek' } })
+    )
+    ;(globalThis as typeof globalThis & { nostr?: unknown }).nostr = {
+      nip04: { decrypt, encrypt: vi.fn() },
+    }
+
+    await syncWorkspacesFromNostr('pubkey-1', ['wss://relay-a'])
+
+    expect(localStorage.getItem('grid34_cek_repo-new')).toBe('fresh-cek')
+  })
 })

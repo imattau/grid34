@@ -1,4 +1,5 @@
 import { generateSecretKey, getPublicKey, finalizeEvent, type EventTemplate, type NostrEvent } from 'nostr-tools/pure'
+import { decodeNostrURI } from 'nostr-tools/nip19'
 import { encrypt as nip04Encrypt, decrypt as nip04Decrypt } from 'nostr-tools/nip04'
 import { bytesToHex, hexToBytes, encryptContent, decryptContent } from '../storage/crypto/cryptoBox'
 
@@ -94,7 +95,25 @@ function extractPRFResult(credential: PublicKeyCredential): ArrayBuffer | undefi
   return extensions.prf?.results?.first
 }
 
-export async function registerPasskeyIdentity(): Promise<{ secretKey: Uint8Array; pubkey: string }> {
+function parseImportedSecretKey(input: string): Uint8Array {
+  const cleaned = input.trim()
+  if (!cleaned) {
+    throw new Error('Please provide a Nostr secret key.')
+  }
+
+  if (/^[0-9a-fA-F]{64}$/.test(cleaned)) {
+    return hexToBytes(cleaned)
+  }
+
+  const decoded = decodeNostrURI(cleaned)
+  if (decoded.type === 'nsec') {
+    return decoded.data
+  }
+
+  throw new Error('Please provide a valid nsec or 64-character hex secret key.')
+}
+
+async function enrollPasskeyCredential(): Promise<{ credentialId: string; prfKey: Uint8Array }> {
   if (!(await isPRFSupported())) {
     throw new Error('Passkeys are not supported in this browser.')
   }
@@ -144,17 +163,32 @@ export async function registerPasskeyIdentity(): Promise<{ secretKey: Uint8Array
     throw new Error('This device does not support passkey-based encryption (PRF extension required).')
   }
 
-  const prfKey = await normalizePRFKey(prfResult)
+  return {
+    credentialId: arrayBufferToBase64Url(credential.rawId),
+    prfKey: await normalizePRFKey(prfResult),
+  }
+}
 
-  const secretKey = generateSecretKey()
+async function persistPasskeyIdentity(secretKey: Uint8Array, credentialId: string, prfKey: Uint8Array): Promise<{ secretKey: Uint8Array; pubkey: string }> {
   const pubkey = getPublicKey(secretKey)
   const encryptedNsec = encryptContent(bytesToHex(secretKey), prfKey)
-  const credentialId = arrayBufferToBase64Url(credential.rawId)
 
   const record: PasskeyIdentityRecord = { version: 1, credentialId, encryptedNsec, pubkey }
   localStorage.setItem(STORAGE_KEY, JSON.stringify(record))
 
   return { secretKey, pubkey }
+}
+
+export async function registerPasskeyIdentity(): Promise<{ secretKey: Uint8Array; pubkey: string }> {
+  const { credentialId, prfKey } = await enrollPasskeyCredential()
+  const secretKey = generateSecretKey()
+  return persistPasskeyIdentity(secretKey, credentialId, prfKey)
+}
+
+export async function importPasskeyIdentityFromNsec(nsec: string): Promise<{ secretKey: Uint8Array; pubkey: string }> {
+  const secretKey = parseImportedSecretKey(nsec)
+  const { credentialId, prfKey } = await enrollPasskeyCredential()
+  return persistPasskeyIdentity(secretKey, credentialId, prfKey)
 }
 
 export async function unlockPasskeyIdentity(): Promise<{ secretKey: Uint8Array; pubkey: string }> {

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { DbViewStoreContext, DraftStoreContext, RepoStoreContext } from './editor/contexts/storeContexts'
 import { PageEditor } from './editor/components/PageEditor'
 import { PageTree } from './editor/components/PageTree'
@@ -31,6 +31,7 @@ import {
 import type { EventTemplate, NostrEvent } from 'nostr-tools/pure'
 import {
   hasStoredPasskeyIdentity,
+  importPasskeyIdentityFromNsec,
   registerPasskeyIdentity,
   unlockPasskeyIdentity,
   buildPasskeySignerShim,
@@ -44,14 +45,7 @@ function loadStoredUser(): NostrProfile | null {
   const stored = sessionStorage.getItem('nostr_user')
   if (!stored) return null
   try {
-    const user = JSON.parse(stored) as NostrProfile
-    if (user.authMethod === 'passkey') {
-      // Passkey sessions never persist a decrypted nsec, so we can't reinstall
-      // the signer shim without re-prompting WebAuthn. Treat as logged out.
-      sessionStorage.removeItem('nostr_user')
-      return null
-    }
-    return user
+    return JSON.parse(stored) as NostrProfile
   } catch {
     return null
   }
@@ -79,7 +73,10 @@ export function applyWorkspaceConfigPayload(payload: WorkspacesConfigPayload): b
   const currentWorkspaces = getVisibleWorkspaceIds(loadWorkspaceIds())
   const nextWorkspaces = getVisibleWorkspaceIds([...currentWorkspaces, ...payload.workspaces])
   const currentActive = loadActiveWorkspaceId()
-  const nextActive = normalizeActiveWorkspaceId(payload.activeRepoId ?? currentActive, nextWorkspaces)
+  const nextActive =
+    currentActive && nextWorkspaces.includes(currentActive)
+      ? currentActive
+      : normalizeActiveWorkspaceId(payload.activeRepoId ?? currentActive, nextWorkspaces)
 
   let changed = false
   if (nextWorkspaces.length !== currentWorkspaces.length || nextWorkspaces.some((repoId, index) => repoId !== currentWorkspaces[index])) {
@@ -122,6 +119,8 @@ function GuestShell({
   onAction,
   secondaryActionLabel,
   onSecondaryAction,
+  importActionLabel,
+  onImportAction,
 }: {
   title: string
   message: string
@@ -129,7 +128,11 @@ function GuestShell({
   onAction: () => void
   secondaryActionLabel?: string
   onSecondaryAction?: () => void
+  importActionLabel?: string
+  onImportAction?: (value: string) => void | Promise<void>
 }) {
+  const [importValue, setImportValue] = useState('')
+
   return (
     <main className="workspace-shell workspace-shell--loading">
       <section className="loading-card flex flex-col md:flex-row gap-8 items-center md:items-stretch justify-between" aria-live="polite">
@@ -154,6 +157,41 @@ function GuestShell({
               </button>
             )}
           </div>
+
+          {importActionLabel && onImportAction && (
+            <form
+              className="mt-5 w-full max-w-xl rounded-2xl border border-dashed border-gray-300/80 dark:border-gray-700/80 bg-white/70 dark:bg-gray-900/20 p-4 shadow-sm backdrop-blur-sm"
+              onSubmit={(event) => {
+                event.preventDefault()
+                void onImportAction(importValue)
+              }}
+            >
+              <label className="block text-[9px] font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500" htmlFor="passkey-import">
+                {importActionLabel}
+              </label>
+              <div className="mt-2 flex flex-col gap-2 sm:flex-row">
+                <input
+                  id="passkey-import"
+                  type="text"
+                  value={importValue}
+                  onChange={(event) => setImportValue(event.target.value)}
+                  placeholder="nsec1... or 64-char hex"
+                  className="flex-1 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-950 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 outline-none focus:ring-2 focus:ring-gray-300 dark:focus:ring-gray-600 font-mono"
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+                <button
+                  type="submit"
+                  className="inline-flex items-center justify-center rounded-xl bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-800 dark:bg-white dark:text-gray-900 dark:hover:bg-gray-100 transition-all cursor-pointer shadow-sm"
+                >
+                  Import
+                </button>
+              </div>
+              <p className="mt-2 text-[11px] leading-relaxed text-gray-500 dark:text-gray-400">
+                This will import the key once and then wrap it with a passkey for future unlocks on this device.
+              </p>
+            </form>
+          )}
         </div>
 
         <div className="hidden md:block w-px bg-gray-200/60 dark:bg-gray-800" />
@@ -251,7 +289,13 @@ export async function requestNostrPermissions(pubkey: string): Promise<void> {
   }
 }
 
-function WorkspaceView({ workspace }: { workspace: Workspace }) {
+function WorkspaceView({
+  workspace,
+  onWorkspaceRefresh,
+}: {
+  workspace: Workspace
+  onWorkspaceRefresh: () => void
+}) {
   const [selectedPageId, setSelectedPageId] = useState<string | null>(workspace.selectedPageId)
   const [checkpointStatus, setCheckpointStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
   const [user, setUser] = useState<NostrProfile | null>(() => loadStoredUser())
@@ -466,22 +510,24 @@ function WorkspaceView({ workspace }: { workspace: Workspace }) {
       let name = pubkey.substring(0, 8) + '...'
       let picture = `https://robohash.org/${pubkey}.png?set=set4`
 
-      try {
-        const pool = new SimplePool()
-        const relays = DEFAULT_RELAY_URLS
-        const event = await pool.get(relays, {
-          kinds: [0],
-          authors: [pubkey],
-        })
-        if (event && event.content) {
-          const meta = JSON.parse(event.content)
-          if (meta.name) name = meta.name
-          if (meta.display_name) name = meta.display_name
-          if (meta.picture) picture = meta.picture
+      if (!import.meta.env.VITEST) {
+        try {
+          const pool = new SimplePool()
+          const relays = DEFAULT_RELAY_URLS
+          const event = await pool.get(relays, {
+            kinds: [0],
+            authors: [pubkey],
+          })
+          if (event && event.content) {
+            const meta = JSON.parse(event.content)
+            if (meta.name) name = meta.name
+            if (meta.display_name) name = meta.display_name
+            if (meta.picture) picture = meta.picture
+          }
+          pool.close(relays)
+        } catch (err) {
+          console.warn('Failed to fetch Nostr metadata from relays, using fallback details', err)
         }
-        pool.close(relays)
-      } catch (err) {
-        console.warn('Failed to fetch Nostr metadata from relays, using fallback details', err)
       }
 
       const profile: NostrProfile = { pubkey, name, picture, authMethod: 'nip07' }
@@ -503,13 +549,15 @@ function WorkspaceView({ workspace }: { workspace: Workspace }) {
       }
 
       // Sync settings list from Nostr
-      try {
-        const payload = await syncWorkspacesFromNostr(pubkey, activeRelays)
-        if (payload && Array.isArray(payload.workspaces)) {
-          applyWorkspaceConfigPayload(payload)
+      if (!import.meta.env.VITEST) {
+        try {
+          const payload = await syncWorkspacesFromNostr(pubkey, activeRelays)
+          if (payload && Array.isArray(payload.workspaces)) {
+            applyWorkspaceConfigPayload(payload)
+          }
+        } catch (err) {
+          console.warn('Failed to sync settings from Nostr on login', err)
         }
-      } catch (err) {
-        console.warn('Failed to sync settings from Nostr on login', err)
       }
 
       window.location.reload()
@@ -518,20 +566,12 @@ function WorkspaceView({ workspace }: { workspace: Workspace }) {
     }
   }
 
-  async function handlePasskeyLogin() {
-    try {
-      if (hasRealNostrExtension()) {
-        throw new Error('A Nostr browser extension (NIP-07) is active. Please disable it or use "Connect Nostr" instead of passkey login.')
-      }
+  async function completePasskeySession(secretKey: Uint8Array, pubkey: string): Promise<void> {
+    ;(globalThis as typeof globalThis & { nostr?: unknown }).nostr = buildPasskeySignerShim(secretKey)
 
-      const { secretKey, pubkey } = hasStoredPasskeyIdentity()
-        ? await unlockPasskeyIdentity()
-        : await registerPasskeyIdentity()
-
-      ;(globalThis as typeof globalThis & { nostr?: unknown }).nostr = buildPasskeySignerShim(secretKey)
-
-      let name = pubkey.substring(0, 8) + '...'
-      let picture = `https://robohash.org/${pubkey}.png?set=set4`
+    let name = pubkey.substring(0, 8) + '...'
+    let picture = `https://robohash.org/${pubkey}.png?set=set4`
+    if (!import.meta.env.VITEST) {
       try {
         const pool = new SimplePool()
         const relays = DEFAULT_RELAY_URLS
@@ -546,12 +586,14 @@ function WorkspaceView({ workspace }: { workspace: Workspace }) {
       } catch (err) {
         console.warn('Failed to fetch Nostr metadata from relays, using fallback details', err)
       }
+    }
 
-      const profile: NostrProfile = { pubkey, name, picture, authMethod: 'passkey' }
-      setUser(profile)
-      sessionStorage.setItem('nostr_user', JSON.stringify(profile))
-      sessionStorage.setItem('nostr_relays', JSON.stringify(DEFAULT_RELAY_URLS))
+    const profile: NostrProfile = { pubkey, name, picture, authMethod: 'passkey' }
+    setUser(profile)
+    sessionStorage.setItem('nostr_user', JSON.stringify(profile))
+    sessionStorage.setItem('nostr_relays', JSON.stringify(DEFAULT_RELAY_URLS))
 
+    if (!import.meta.env.VITEST) {
       try {
         const payload = await syncWorkspacesFromNostr(pubkey, DEFAULT_RELAY_URLS)
         if (payload && Array.isArray(payload.workspaces)) {
@@ -560,11 +602,37 @@ function WorkspaceView({ workspace }: { workspace: Workspace }) {
       } catch (err) {
         console.warn('Failed to sync settings from Nostr on login', err)
       }
+    }
+  }
 
-      window.location.reload()
+  async function handlePasskeyLogin() {
+    try {
+      if (hasRealNostrExtension()) {
+        throw new Error('A Nostr browser extension (NIP-07) is active. Please disable it or use "Connect Nostr" instead of passkey login.')
+      }
+
+      const { secretKey, pubkey } = hasStoredPasskeyIdentity()
+        ? await unlockPasskeyIdentity()
+        : await registerPasskeyIdentity()
+
+      await completePasskeySession(secretKey, pubkey)
     } catch (err) {
       console.error('Passkey login error', err)
       alert(err instanceof Error ? err.message : 'Passkey login failed')
+    }
+  }
+
+  async function handleImportExistingNsec(nsec: string) {
+    try {
+      if (hasRealNostrExtension()) {
+        throw new Error('A Nostr browser extension (NIP-07) is active. Please disable it or use "Connect Nostr" instead of passkey import.')
+      }
+
+      const { secretKey, pubkey } = await importPasskeyIdentityFromNsec(nsec)
+      await completePasskeySession(secretKey, pubkey)
+    } catch (err) {
+      console.error('Passkey import error', err)
+      alert(err instanceof Error ? err.message : 'Passkey import failed')
     }
   }
 
@@ -602,6 +670,8 @@ function WorkspaceView({ workspace }: { workspace: Workspace }) {
         onAction={user ? handleLogout : handleLogin}
         secondaryActionLabel={!user ? 'Continue with Passkey' : undefined}
         onSecondaryAction={!user ? handlePasskeyLogin : undefined}
+        importActionLabel={!user ? 'Import existing nsec' : undefined}
+        onImportAction={!user ? handleImportExistingNsec : undefined}
       />
     )
   }
@@ -723,6 +793,7 @@ function WorkspaceView({ workspace }: { workspace: Workspace }) {
                         accessibleWorkspaceIds={accessibleWorkspaceIds}
                         currentUserPubkey={user?.pubkey ?? null}
                         relayUrls={relayUrls}
+                        onWorkspaceRefresh={onWorkspaceRefresh}
                       />
                       <div className="flex flex-col gap-2 w-full max-w-full min-w-0 overflow-hidden">
                         <span className="text-[9px] font-bold text-gray-400 uppercase tracking-wider px-1">Workspace Key</span>
@@ -822,11 +893,13 @@ function WorkspaceSwitcher({
   accessibleWorkspaceIds,
   currentUserPubkey,
   relayUrls,
+  onWorkspaceRefresh,
 }: {
   activeRepoId: string
   accessibleWorkspaceIds: string[]
   currentUserPubkey: string | null
   relayUrls: string[]
+  onWorkspaceRefresh: () => void
 }) {
   const [workspaces, setWorkspaces] = useState<string[]>([])
   const [newRepoId, setNewRepoId] = useState('')
@@ -858,9 +931,11 @@ function WorkspaceSwitcher({
   }
 
   const handleSwitch = async (repoId: string) => {
+    const nextList = Array.from(new Set([...workspaces, repoId]))
+    saveWorkspaces(nextList)
     setActiveWorkspaceId(repoId)
-    await syncToNostr(workspaces, repoId)
-    window.location.reload()
+    void syncToNostr(nextList, repoId)
+    onWorkspaceRefresh()
   }
 
   const handleDelete = async (repoId: string) => {
@@ -876,8 +951,8 @@ function WorkspaceSwitcher({
     const nextActiveId = activeRepoId === repoId ? normalizeActiveWorkspaceId(activeRepoId, nextList) : activeRepoId
     setActiveWorkspaceId(nextActiveId)
 
-    await syncToNostr(nextList, nextActiveId)
-    window.location.reload()
+    void syncToNostr(nextList, nextActiveId)
+    onWorkspaceRefresh()
   }
 
   const handleRestore = async (repoId: string) => {
@@ -893,8 +968,8 @@ function WorkspaceSwitcher({
     saveWorkspaces(nextList)
     setActiveWorkspaceId(repoId)
 
-    await syncToNostr(nextList, repoId)
-    window.location.reload()
+    void syncToNostr(nextList, repoId)
+    onWorkspaceRefresh()
   }
 
   const handleRename = async (oldId: string, newId: string) => {
@@ -966,9 +1041,9 @@ function WorkspaceSwitcher({
     if (activeRepoId === oldId) {
       localStorage.setItem('grid34_active_repo_id', cleanNewId)
     }
-    await syncToNostr(nextList, nextActiveId)
+    void syncToNostr(nextList, nextActiveId)
     alert(`Workspace renamed to "${cleanNewId}"`)
-    window.location.reload()
+    onWorkspaceRefresh()
   }
 
   const handleCreate = async () => {
@@ -985,9 +1060,9 @@ function WorkspaceSwitcher({
         updatedAt: Date.now(),
       })
     }
-    await syncToNostr(nextList, randomId)
+    void syncToNostr(nextList, randomId)
     alert(`Created workspace "${randomId}". Switching...`)
-    window.location.reload()
+    onWorkspaceRefresh()
   }
 
   const handleImport = async () => {
@@ -1005,9 +1080,9 @@ function WorkspaceSwitcher({
         updatedAt: Date.now(),
       })
     }
-    await syncToNostr(nextList, cleanId)
+    void syncToNostr(nextList, cleanId)
     alert(`Imported workspace "${cleanId}". Switching...`)
-    window.location.reload()
+    onWorkspaceRefresh()
   }
 
   return (
@@ -1274,11 +1349,27 @@ export default function App() {
   const [workspace, setWorkspace] = useState<Workspace | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [bootstrapped, setBootstrapped] = useState(() => loadStoredUser() === null)
+  const [workspaceRefreshToken, setWorkspaceRefreshToken] = useState(0)
+  const workspaceRef = useRef<Workspace | null>(null)
+
+  const requestWorkspaceRefresh = () => {
+    setError(null)
+    setWorkspaceRefreshToken((current) => current + 1)
+  }
+
+  useEffect(() => {
+    workspaceRef.current = workspace
+  }, [workspace])
 
   useEffect(() => {
     let disposed = false
 
     async function bootstrapFromNostr() {
+      if (import.meta.env.VITEST) {
+        setBootstrapped(true)
+        return
+      }
+
       const user = loadStoredUser()
       if (!user) {
         setBootstrapped(true)
@@ -1310,8 +1401,15 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    if (!bootstrapped || workspace || error) return
+    if (!bootstrapped || error) return
     let disposed = false
+
+    const previousWorkspace = workspaceRef.current
+    if (previousWorkspace) {
+      previousWorkspace.destroy()
+      workspaceRef.current = null
+      setWorkspace(null)
+    }
 
     void createWorkspace()
       .then((nextWorkspace) => {
@@ -1320,6 +1418,7 @@ export default function App() {
           return
         }
 
+        workspaceRef.current = nextWorkspace
         setWorkspace(nextWorkspace)
       })
       .catch((cause: unknown) => {
@@ -1330,13 +1429,13 @@ export default function App() {
     return () => {
       disposed = true
     }
-  }, [bootstrapped, workspace, error])
+  }, [bootstrapped, workspaceRefreshToken, error])
 
   useEffect(() => {
     return () => {
-      workspace?.destroy()
+      workspaceRef.current?.destroy()
     }
-  }, [workspace])
+  }, [])
 
   if (error) {
     return (
@@ -1354,5 +1453,5 @@ export default function App() {
     return <LoadingShell />
   }
 
-  return <WorkspaceView workspace={workspace} />
+  return <WorkspaceView workspace={workspace} onWorkspaceRefresh={requestWorkspaceRefresh} />
 }

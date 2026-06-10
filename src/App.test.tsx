@@ -3,10 +3,17 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import App, { applyWorkspaceConfigPayload, requestNostrPermissions } from './App'
 
-const { hasStoredPasskeyIdentityMock, registerPasskeyIdentityMock, unlockPasskeyIdentityMock, buildPasskeySignerShimMock } = vi.hoisted(() => ({
+const {
+  hasStoredPasskeyIdentityMock,
+  registerPasskeyIdentityMock,
+  unlockPasskeyIdentityMock,
+  importPasskeyIdentityFromNsecMock,
+  buildPasskeySignerShimMock,
+} = vi.hoisted(() => ({
   hasStoredPasskeyIdentityMock: vi.fn(() => false),
   registerPasskeyIdentityMock: vi.fn(),
   unlockPasskeyIdentityMock: vi.fn(),
+  importPasskeyIdentityFromNsecMock: vi.fn(),
   buildPasskeySignerShimMock: vi.fn(() => ({
     getPublicKey: vi.fn(),
     signEvent: vi.fn(),
@@ -18,6 +25,7 @@ vi.mock('./app/passkeyIdentity', () => ({
   hasStoredPasskeyIdentity: hasStoredPasskeyIdentityMock,
   registerPasskeyIdentity: registerPasskeyIdentityMock,
   unlockPasskeyIdentity: unlockPasskeyIdentityMock,
+  importPasskeyIdentityFromNsec: importPasskeyIdentityFromNsecMock,
   buildPasskeySignerShim: buildPasskeySignerShimMock,
 }))
 
@@ -30,6 +38,7 @@ describe('App', () => {
     hasStoredPasskeyIdentityMock.mockReset().mockReturnValue(false)
     registerPasskeyIdentityMock.mockReset()
     unlockPasskeyIdentityMock.mockReset()
+    importPasskeyIdentityFromNsecMock.mockReset()
     buildPasskeySignerShimMock.mockClear()
   })
 
@@ -52,6 +61,8 @@ describe('App', () => {
 
     expect(await screen.findByText(/waiting to log in/i, {}, { timeout: 10000 })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /continue with passkey/i })).toBeInTheDocument()
+    expect(screen.getByLabelText(/import existing nsec/i)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^import$/i })).toBeInTheDocument()
   }, 30000)
 
   it('registers a new passkey identity when none is stored', async () => {
@@ -140,6 +151,46 @@ describe('App', () => {
     vi.unstubAllGlobals()
   }, 30000)
 
+  it('imports an existing nsec into a passkey identity', async () => {
+    vi.useRealTimers()
+    localStorage.clear()
+    sessionStorage.clear()
+
+    try {
+      // Avoid real relay connections (and their lingering async events) during this test.
+      vi.stubGlobal(
+        'WebSocket',
+        class {
+          constructor() {
+            throw new Error('WebSocket disabled in test')
+          }
+        }
+      )
+
+      importPasskeyIdentityFromNsecMock.mockResolvedValue({
+        secretKey: new Uint8Array(32).fill(3),
+        pubkey: 'passkey-imported-pubkey',
+      })
+
+      render(<App />)
+
+      const input = await screen.findByLabelText(/import existing nsec/i, {}, { timeout: 10000 })
+      await userEvent.type(input, 'nsec1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq')
+      await userEvent.click(screen.getByRole('button', { name: /import/i }))
+
+      await vi.waitFor(() => {
+        expect(importPasskeyIdentityFromNsecMock).toHaveBeenCalledWith(expect.stringContaining('nsec1'))
+      })
+      await vi.waitFor(() => {
+        const stored = sessionStorage.getItem('nostr_user')
+        expect(stored).toBeTruthy()
+        expect(JSON.parse(stored!)).toMatchObject({ pubkey: 'passkey-imported-pubkey', authMethod: 'passkey' })
+      })
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  }, 30000)
+
   it('boots a Notion-like workspace with the editor and page tree wired up for the owner', async () => {
     vi.useRealTimers()
     localStorage.clear()
@@ -173,7 +224,7 @@ describe('App', () => {
     expect(await screen.findByText(/waiting to log in/i, {}, { timeout: 10000 })).toBeInTheDocument()
   }, 30000)
 
-  it('does not restore a passkey session across reload and clears the stored profile', async () => {
+  it('restores a stored passkey session on load', async () => {
     vi.useRealTimers()
     localStorage.clear()
     sessionStorage.clear()
@@ -185,8 +236,9 @@ describe('App', () => {
 
     render(<App />)
 
-    expect(await screen.findByText(/waiting to log in/i, {}, { timeout: 10000 })).toBeInTheDocument()
-    expect(sessionStorage.getItem('nostr_user')).toBeNull()
+    expect(await screen.findByRole('button', { name: /alice/i }, { timeout: 10000 })).toBeInTheDocument()
+    expect(screen.queryByText(/waiting to log in/i)).not.toBeInTheDocument()
+    expect(JSON.parse(sessionStorage.getItem('nostr_user') ?? '{}')).toMatchObject({ authMethod: 'passkey' })
   }, 30000)
 
   it('shows the CEK controls in the workspace sidebar instead of the user menu', async () => {
@@ -227,6 +279,50 @@ describe('App', () => {
     expect(screen.queryByText('Workspace Key', { selector: 'span' })).not.toBeInTheDocument()
     expect(screen.queryByText(/create new/i)).not.toBeInTheDocument()
     expect(screen.queryByText(/import existing/i)).not.toBeInTheDocument()
+  }, 30000)
+
+  it('switches workspaces in place without reloading the document', async () => {
+    vi.useRealTimers()
+    localStorage.clear()
+    sessionStorage.clear()
+    localStorage.setItem('grid34_workspace_owner_workspace-repo', 'pubkey-1')
+    localStorage.setItem('grid34_workspace_owner_workspace-alt', 'pubkey-1')
+    localStorage.setItem('grid34_workspaces', JSON.stringify(['workspace-repo', 'workspace-alt']))
+    localStorage.setItem('grid34_active_repo_id', 'workspace-repo')
+    sessionStorage.setItem('nostr_user', JSON.stringify({ pubkey: 'pubkey-1', name: 'Alice', picture: 'https://example.com/avatar.png' }))
+
+    const user = userEvent.setup()
+    render(<App />)
+
+    expect(await screen.findByText('workspace-repo', { selector: 'span' }, { timeout: 10000 })).toBeInTheDocument()
+    await user.click(await screen.findByRole('button', { name: /workspace-alt/i }, { timeout: 10000 }))
+
+    await vi.waitFor(() => {
+      expect(localStorage.getItem('grid34_active_repo_id')).toBe('workspace-alt')
+    })
+  }, 30000)
+
+  it('switches an accessible workspace by adding it to the local workspace list', async () => {
+    vi.useRealTimers()
+    localStorage.clear()
+    sessionStorage.clear()
+    localStorage.setItem('grid34_workspace_owner_workspace-repo', 'pubkey-1')
+    localStorage.setItem('grid34_workspace_owner_workspace-alt', 'pubkey-1')
+    localStorage.setItem('grid34_workspaces', JSON.stringify(['workspace-repo']))
+    localStorage.setItem('grid34_accessible_workspaces_pubkey-1', JSON.stringify(['workspace-alt']))
+    localStorage.setItem('grid34_active_repo_id', 'workspace-repo')
+    sessionStorage.setItem('nostr_user', JSON.stringify({ pubkey: 'pubkey-1', name: 'Alice', picture: 'https://example.com/avatar.png' }))
+
+    const user = userEvent.setup()
+    render(<App />)
+
+    expect(await screen.findByText('workspace-repo', { selector: 'span' }, { timeout: 10000 })).toBeInTheDocument()
+    await user.click(await screen.findByRole('button', { name: /workspace-alt/i }, { timeout: 10000 }))
+
+    await vi.waitFor(() => {
+      expect(localStorage.getItem('grid34_active_repo_id')).toBe('workspace-alt')
+      expect(JSON.parse(localStorage.getItem('grid34_workspaces') ?? '[]')).toEqual(['workspace-repo', 'workspace-alt'])
+    })
   }, 30000)
 
   it('shows checkpoint feedback when the checkpoint button is clicked', async () => {
@@ -295,6 +391,21 @@ describe('App', () => {
     expect(getBlossomServers).toHaveBeenCalled()
     expect(getNip96Servers).toHaveBeenCalled()
     expect(getMediaServers).toHaveBeenCalled()
+  })
+
+  it('keeps a valid local active workspace when syncing remote config', () => {
+    localStorage.setItem('grid34_workspaces', JSON.stringify(['workspace-local', 'workspace-remote']))
+    localStorage.setItem('grid34_active_repo_id', 'workspace-local')
+
+    const changed = applyWorkspaceConfigPayload({
+      workspaces: ['workspace-remote'],
+      activeRepoId: 'workspace-remote',
+      updatedAt: Date.now(),
+    })
+
+    expect(changed).toBe(false)
+    expect(JSON.parse(localStorage.getItem('grid34_workspaces') ?? '[]')).toEqual(['workspace-local', 'workspace-remote'])
+    expect(localStorage.getItem('grid34_active_repo_id')).toBe('workspace-local')
   })
 
   it('keeps deleted workspaces hidden when syncing workspace config from relays', () => {

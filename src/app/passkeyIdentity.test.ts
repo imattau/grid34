@@ -1,10 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { getPublicKey } from 'nostr-tools/pure'
+import { nsecEncode } from 'nostr-tools/nip19'
 import {
   buildPasskeySignerShim,
   clearPasskeyIdentity,
   getStoredPasskeyPubkey,
   hasStoredPasskeyIdentity,
+  importPasskeyIdentityFromNsec,
   registerPasskeyIdentity,
   unlockPasskeyIdentity,
 } from './passkeyIdentity'
@@ -95,6 +97,26 @@ describe('passkeyIdentity', () => {
     expect(typeof record.credentialId).toBe('string')
     expect(typeof record.encryptedNsec).toBe('string')
     expect(record.pubkey).toBe(pubkey)
+  })
+
+  it('importPasskeyIdentityFromNsec stores an existing secret key behind a passkey', async () => {
+    mockCredentialsWithPRF()
+
+    const existingSecretKey = new Uint8Array(32)
+    for (let i = 0; i < existingSecretKey.length; i++) existingSecretKey[i] = 255 - i
+    const existingNsec = nsecEncode(existingSecretKey)
+
+    const { secretKey, pubkey } = await importPasskeyIdentityFromNsec(existingNsec)
+
+    expect(secretKey).toEqual(existingSecretKey)
+    expect(getPublicKey(secretKey)).toBe(pubkey)
+
+    const stored = localStorage.getItem('grid34_passkey_identity')
+    expect(stored).toBeTruthy()
+    const record = JSON.parse(stored!)
+    expect(record.pubkey).toBe(pubkey)
+    expect(record.credentialId).toBeTruthy()
+    expect(record.encryptedNsec).toBeTruthy()
   })
 
   it('unlockPasskeyIdentity round-trips the secret key after registration', async () => {

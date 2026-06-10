@@ -46,9 +46,8 @@ export async function syncWorkspacesFromNostr(
       if (latest.ceks) {
         for (const [repoId, cekJson] of Object.entries(latest.ceks)) {
           const localKey = `grid34_cek_${repoId}`
-          if (!localStorage.getItem(localKey)) {
-            localStorage.setItem(localKey, cekJson)
-          }
+          // Treat the relayed CEK as authoritative so browsers converge on the same workspace key.
+          localStorage.setItem(localKey, cekJson)
         }
       }
       return latest

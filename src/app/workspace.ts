@@ -329,12 +329,74 @@ export async function createWorkspace(): Promise<Workspace> {
     }
   }
 
+  async function publishDeletion(eventIds: string[]): Promise<void> {
+    if (eventIds.length === 0) return
+    const template = {
+      kind: 5,
+      created_at: Math.floor(Date.now() / 1000),
+      tags: eventIds.map((id) => ['e', id]),
+      content: 'Deleting older revisions',
+    }
+    try {
+      const signed = await signer.signEvent(template)
+      await Promise.all(relayUrls.map(async (url) => {
+        try {
+          await Promise.all(pool.publish([url], signed as any))
+        } catch (err) {
+          console.warn(`Failed to publish deletion to relay ${url}`, err)
+        }
+      }))
+    } catch (err) {
+      console.warn('Failed to sign deletion event', err)
+    }
+  }
+
+  function purgeOlderRevisions(): void {
+    const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000
+    const eventIdsToDelete: string[] = []
+    let changed = false
+
+    for (const [pageId, revisions] of Object.entries(revisionHistory.pages)) {
+      const keep: PageRevision[] = []
+      let pageChanged = false
+      for (const rev of revisions) {
+        if (rev.createdAt < cutoff) {
+          if (!rev.id.startsWith('seed-') && !rev.id.startsWith('local-') && !rev.id.startsWith('checkpoint-')) {
+            eventIdsToDelete.push(rev.id)
+          }
+          pageChanged = true
+          changed = true
+        } else {
+          keep.push(rev)
+        }
+      }
+      if (pageChanged) {
+        revisionHistory.pages[pageId] = keep
+      }
+    }
+
+    if (changed) {
+      persistRevisionHistory(revisionHistory, revisionsKey)
+    }
+
+    if (eventIdsToDelete.length > 0) {
+      void publishDeletion(eventIdsToDelete)
+    }
+  }
+
+  purgeOlderRevisions()
+  const purgeInterval = setInterval(purgeOlderRevisions, 24 * 60 * 60 * 1000)
+
   function applyState(nextState: PageTreeState): void {
     currentState = nextState
     stateSubject.next(nextState)
     applyStateToIndex(db, nextState)
     persistState(nextState, stateKey, legacyPagesKey)
     syncDatabaseViewRows(db, dbViewStore, databaseRows, nextState, dbRowsKey)
+  }
+
+  function applyLocalPagePatch(page: Page, createdAt: number): void {
+    applyState(reduceRepo(currentState, [{ id: `local-${page.id}-${page.updatedAt}`, pageId: page.id, page, createdAt }]))
   }
 
   applyState(currentState)
@@ -355,6 +417,9 @@ export async function createWorkspace(): Promise<Workspace> {
         createdAt: event.created_at,
       }
       applyState(reduceRepo(currentState, [patch]))
+      if (!page.deleted) {
+        recordRevision(page, event.created_at * 1000, event.id, true)
+      }
     } catch (err) {
       console.warn('Skipping undecryptable workspace patch', event?.id, err)
     }
@@ -385,7 +450,7 @@ export async function createWorkspace(): Promise<Workspace> {
       return currentState.pages[pageId]
     },
     listPageRevisions(pageId: string): PageRevision[] {
-      return (revisionHistory.pages[pageId] ?? []).map((revision) => ({
+      return (revisionHistory.pages[pageId] ?? []).slice(0, 10).map((revision) => ({
         ...revision,
         page: { ...revision.page, blocks: revision.page.blocks.map((block) => ({ ...block, content: { ...block.content } })) },
       }))
@@ -402,8 +467,7 @@ export async function createWorkspace(): Promise<Workspace> {
     publisher: {
       async publishPatch(template: EventTemplate): Promise<NostrEvent> {
         const page = JSON.parse(decryptContent(template.content, cek)) as Page
-        applyState(reduceRepo(currentState, [{ id: `local-${page.id}-${page.updatedAt}`, pageId: page.id, page, createdAt: template.created_at }]))
-
+        applyLocalPagePatch(page, template.created_at)
         const signed = await publishToRelays(template, signer, {
           publish: async (url: string, event: NostrEvent) => {
             await Promise.all(pool.publish([url], event))
@@ -484,6 +548,7 @@ export async function createWorkspace(): Promise<Workspace> {
       }
     },
     destroy(): void {
+      clearInterval(purgeInterval)
       destroyed = true
       ;(draftStore as DraftStore & { destroy?: () => void }).destroy?.()
       patchSubscription.unsubscribe()
