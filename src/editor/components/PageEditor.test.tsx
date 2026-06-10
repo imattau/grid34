@@ -715,4 +715,72 @@ describe('PageEditor', () => {
     expect(inviteButton).toBeInTheDocument()
     await userEvent.click(inviteButton)
   })
+
+  it('displays active workspace users avatars and handles duplicate filters', async () => {
+    const page: Page = {
+      id: 'page-1',
+      title: 'Real-time Doc',
+      parentId: null,
+      order: 0,
+      updatedAt: 1000,
+      blocks: [],
+    }
+
+    const repoStore: Partial<EditorRepoStore> = {
+      pageTree$: of({ pages: {} }),
+      observePage: vi.fn(() => of({ status: 'ready', page })),
+      listPageRevisions: vi.fn(() => []),
+    }
+
+    const listeners = new Set<() => void>()
+    const mockStates = new Map<number, any>([
+      [101, { pubkey: 'npub-user-1', username: 'User One' }],
+      [102, { pubkey: 'npub-user-1', username: 'User One duplicate' }],
+      [103, { pubkey: 'npub-user-2', username: 'User Two' }],
+      [999, { pubkey: 'npub-self', username: 'Me' }],
+    ])
+
+    const mockAwareness = {
+      clientID: 999,
+      getStates: () => mockStates,
+      on: (event: string, callback: () => void) => {
+        if (event === 'change') {
+          listeners.add(callback)
+        }
+      },
+      off: (event: string, callback: () => void) => {
+        if (event === 'change') {
+          listeners.delete(callback)
+        }
+      },
+    }
+
+    const draftStore: Partial<DraftStore> = {
+      stage: vi.fn(),
+      drafts$: of({}),
+      flush: vi.fn(),
+      awareness: mockAwareness as any,
+    }
+    const dbViewStore: Partial<DbViewStore> = { observeRows: vi.fn(() => of([])), notifyChanged: vi.fn() }
+
+    render(
+      <RepoStoreContext.Provider value={repoStore as EditorRepoStore}>
+        <DraftStoreContext.Provider value={draftStore as DraftStore}>
+          <DbViewStoreContext.Provider value={dbViewStore as DbViewStore}>
+            <PageEditor pageId="page-1" currentUserPubkey="npub-self" />
+          </DbViewStoreContext.Provider>
+        </DraftStoreContext.Provider>
+      </RepoStoreContext.Provider>
+    )
+
+    await waitFor(() => {
+      const avatars = screen.getAllByRole('img')
+      const titles = avatars.map(img => img.getAttribute('title')).filter(Boolean)
+      expect(titles).toContain('User One' + ' duplicate')
+      expect(titles).toContain('User Two')
+      expect(titles).not.toContain('Me')
+      const userOneAvatars = avatars.filter(img => img.getAttribute('title') === 'User One' + ' duplicate')
+      expect(userOneAvatars.length).toBe(1)
+    })
+  })
 })

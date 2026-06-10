@@ -189,6 +189,33 @@ export function PageEditor({
   }
   const editorDraftStore = canEdit ? draftStore : readOnlyDraftStore
 
+  const [activeUsers, setActiveUsers] = useState<{ pubkey: string; username: string }[]>([])
+
+  useEffect(() => {
+    if (!editorDraftStore.awareness) return
+
+    const updateActiveUsers = () => {
+      const usersMap = new Map<string, { pubkey: string; username: string }>()
+      for (const [clientId, state] of editorDraftStore.awareness.getStates().entries()) {
+        if (clientId === editorDraftStore.awareness.clientID) continue
+        const presence = state as any
+        if (presence && presence.pubkey) {
+          usersMap.set(presence.pubkey, {
+            pubkey: presence.pubkey,
+            username: presence.username || 'User',
+          })
+        }
+      }
+      setActiveUsers(Array.from(usersMap.values()))
+    }
+
+    updateActiveUsers()
+    editorDraftStore.awareness.on('change', updateActiveUsers)
+    return () => {
+      editorDraftStore.awareness.off('change', updateActiveUsers)
+    }
+  }, [editorDraftStore.awareness])
+
   useEffect(() => {
     if (resolvedUserPubkey) {
       const stored = sessionStorage.getItem('nostr_user')
@@ -643,7 +670,27 @@ export function PageEditor({
           />
         </div>
         {canEdit ? (
-          <div className="absolute top-0 right-0 flex items-start gap-1">
+          <div className="absolute top-0 right-0 flex items-center gap-2">
+            {activeUsers.length > 0 && (
+              <div className="flex items-center -space-x-1.5 mr-1" title={`${activeUsers.length} other(s) in this workspace`}>
+                {activeUsers.map((u) => {
+                  const contact = contacts.find((c) => c.pubkey === u.pubkey)
+                  const avatar = contact?.picture || `https://robohash.org/${u.pubkey}.png?set=set4`
+                  return (
+                    <img
+                      key={u.pubkey}
+                      src={avatar}
+                      alt={u.username}
+                      title={u.username}
+                      className="w-7 h-7 rounded-full border-2 border-white dark:border-gray-900 object-cover shadow-sm hover:translate-y-[-2px] hover:z-10 transition-transform duration-200"
+                      onError={(e) => {
+                        e.currentTarget.src = `https://robohash.org/${u.pubkey}.png?set=set4`
+                      }}
+                    />
+                  )
+                })}
+              </div>
+            )}
             <div className="relative">
               <button
                 type="button"
